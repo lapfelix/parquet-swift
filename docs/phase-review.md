@@ -5,24 +5,26 @@
 
 ---
 
-## Overview: 5-Phase Plan
+## Overview: 5-Phase Plan (REVISED)
 
 | Phase | Duration | Cumulative | Key Outcome |
 |-------|----------|------------|-------------|
-| **Phase 1** | 6 weeks | 6 weeks | Read simple files (flat schema, PLAIN encoding) |
-| **Phase 2** | 8 weeks | 14 weeks | Read complex files (all encodings, nested types) |
-| **Phase 3** | 8 weeks | 22 weeks | Write files (compatible with other tools) |
-| **Phase 4** | 6 weeks | 28 weeks | Production features (bloom filters, async, perf) |
-| **Phase 5** | 6 weeks | 34 weeks | Encryption (optional) |
+| **Phase 1** | **10 weeks** | **10 weeks** | **Read real-world files (flat schema, PLAIN + DICT, optional columns)** |
+| **Phase 2** | 6-8 weeks | 16-18 weeks | Read complex files (nested types, delta encodings) |
+| **Phase 3** | 8 weeks | 24-26 weeks | Write files (compatible with other tools) |
+| **Phase 4** | 6 weeks | 30-32 weeks | Production features (bloom filters, async, perf) |
+| **Phase 5** | 6 weeks | 36-38 weeks | Encryption (optional) |
 
-**Total:** 28 weeks (~7 months) for Phases 1-4
+**Total:** 30-32 weeks (~7-8 months) for Phases 1-4
+
+**Note:** Phase 1 revised from 6 weeks to 10 weeks to include dictionary encoding and optional column support, delivering a practical reader instead of a minimal POC.
 
 ---
 
-## Phase 1: Foundation (Practical Reader) - 7-8 weeks
+## Phase 1: Foundation (Practical Reader) - 10 weeks
 
 ### Overview
-Build a practical reader that can handle real-world Parquet files.
+Build a practical reader that can handle real-world Parquet files (flat schema only; nested types deferred to Phase 2).
 
 ### Revised Success Criteria ✨
 - Read flat schema (no nested types yet)
@@ -39,12 +41,16 @@ Build a practical reader that can handle real-world Parquet files.
 **Added:**
 - ✅ Dictionary encoding (critical for real files)
 - ✅ Definition levels for optional columns (nulls)
-- ✅ Minimal RLE decoder (for dictionary indices)
+- ✅ **Minimal RLE decoder** (~200-300 lines)
+  - **Scope:** Dictionary index packs + definition levels only
+  - **NOT included:** Repetition levels, full RLE for boolean columns
+  - Hybrid RLE/bit-packing for int32 values (indices and levels)
+  - Sufficient for dict-encoded columns and max_def_level=1
 
 **Deferred to Phase 2:**
 - Repetition levels (nested types)
-- Delta encodings
-- Full RLE implementation
+- Delta encodings (DELTA_BINARY_PACKED, etc.)
+- Full RLE implementation (for boolean columns, complex level schemes)
 
 ### Milestone Breakdown
 
@@ -202,25 +208,39 @@ This is the most complex milestone. Breaking it down:
 - **Buffer:** +1 day
 
 ##### M1.9c: Dictionary ColumnReader (~3-4 days)
-- **Minimal RLE decoder** (for dictionary indices only)
-  - Hybrid RLE/bit-packing
-  - Just enough for dict page indices
-  - ~200-300 lines
+- **Minimal RLE decoder implementation** (~200-300 lines)
+  - **Scope:** Hybrid RLE/bit-packing for int32 values
+  - **Use cases:**
+    - Dictionary index packs (data page indices)
+    - Definition levels (used in M1.9d)
+  - **NOT implemented yet:**
+    - Repetition levels (Phase 2)
+    - Full RLE for boolean columns (Phase 2)
+    - Complex level schemes (Phase 2)
+  - Implementation:
+    - RLE runs (repeated values)
+    - Bit-packed runs (sequences)
+    - Width calculation
+
 - **Dictionary page handling**
   - Read dictionary page
   - Decode dictionary values (PLAIN)
-  - Store dictionary in memory
-- **Dictionary ColumnReader**
-  - Read data page indices (RLE)
-  - Look up values in dictionary
-- **Testing:**
-  - Read dictionary-encoded columns
-  - Verify values match
+  - Store dictionary in memory (hash map or array)
 
-- **Risk:** High (RLE is complex)
-- **Dependencies:** M1.9b
+- **Dictionary ColumnReader**
+  - Read data page indices (using RLE decoder)
+  - Look up values in dictionary
+  - Return decoded values
+
+- **Testing:**
+  - Read dictionary-encoded int32, string columns
+  - Verify values match expected
+  - Test with various dictionary sizes
+
+- **Risk:** High (RLE bit manipulation is complex)
+- **Dependencies:** M1.9b (PLAIN reader)
 - **Deliverable:** Can read DICT-encoded columns
-- **Buffer:** +2 days (RLE is tricky)
+- **Buffer:** +2 days (RLE is tricky, expect edge cases)
 
 ##### M1.9d: Optional Column Support (~2-3 days)
 - **Definition level handling**
@@ -339,33 +359,47 @@ Even as a solo developer, some work can overlap:
 
 ---
 
-## Phase 2: Full Reader Support - 8 weeks
+## Phase 2: Full Reader Support - 6-8 weeks
 
 ### Overview
-Add all remaining reader features for production use.
+Add nested types and remaining encodings for complete reader functionality.
 
 ### Success Criteria
-- All encoding types work
-- Nested types (lists, maps, structs)
-- Optional columns (null handling)
-- Pass 50+ parquet-testing files
+- **Nested types** (lists, maps, structs) - the main focus
+- Delta encodings
+- Full RLE for booleans
+- Pass 50+ parquet-testing files including nested schemas
+
+### What's Already Done in Phase 1
+- ✅ Dictionary encoding
+- ✅ Optional columns (definition levels, max_def_level=1)
+- ✅ Minimal RLE (for dict indices and definition levels)
 
 ### Milestone Breakdown
 
-#### M2.1: Dictionary Encoding (~5-7 days)
-- DictionaryDecoder
-- Dictionary page handling
-- Index decoding (RLE)
-- **Risk:** Medium
-- **Note:** Depends on RLE for indices (can implement minimal RLE just for dict indices)
+#### M2.1: Repetition Levels & Nested Types Foundation (~7-10 days) ⚠️ CRITICAL
+- **Repetition level handling**
+  - RLE decoding for repetition levels (reuse Phase 1 RLE)
+  - Map repetition levels to list boundaries
+  - Understand when to start/end nested structures
+- **RecordReader architecture** (from C++)
+  - Port the pattern from `column_reader.cc:L1800+`
+  - Separate level decoding from value decoding
+  - Buffer management for nested structures
+- **Testing:**
+  - Simple repeated fields (lists of primitives)
+  - Verify correct list boundaries
 
-#### M2.2: RLE Encoding (~7-10 days) ⚠️ COMPLEX
-- RLE/bit-packing hybrid
-- Used for booleans, levels
-- Bit manipulation heavy
-- **Risk:** High
-- **Dependencies:** None (but needed by dict encoding)
-- **Note:** Most complex encoding algorithm
+- **Risk:** Very High
+- **Dependencies:** Phase 1 RLE decoder
+- **Note:** This is the hardest part of Parquet
+
+#### M2.2: Full RLE for Booleans (~3-4 days)
+- Extend minimal RLE to handle boolean columns
+- Bit-level RLE (not just int32 values)
+- **Risk:** Medium
+- **Dependencies:** Phase 1 minimal RLE
+- **Note:** Phase 1 RLE handles int32; this extends to bools
 
 #### M2.3: Delta Encodings (~5-7 days)
 - DELTA_BINARY_PACKED
