@@ -43,7 +43,7 @@ public final class PageReader {
     /// Compression codec
     private let codec: Codec
 
-    /// Current offset in the column chunk
+    /// Current offset in the file
     private var offset: Int64
 
     /// Whether we've read the dictionary page
@@ -69,6 +69,7 @@ public final class PageReader {
 
         // Start reading from the first page
         // Dictionary page comes first (if present), otherwise first data page
+        // Note: Page offsets in ColumnMetaData are absolute file offsets per Parquet spec
         if let dictOffset = columnMetadata.dictionaryPageOffset {
             self.offset = dictOffset
         } else {
@@ -181,7 +182,15 @@ public final class PageReader {
     private func readPageHeader() throws -> (ThriftPageHeader, Int) {
         // Read enough bytes for the header (headers are typically small, < 1KB)
         // We'll read generously and ThriftReader will use what it needs
-        let headerData = try reader.read(at: Int(offset), count: 4096)
+        // But clamp to file size to avoid reading past end
+        let fileSize = Int64(try reader.fileSize)
+        let maxRead = min(4096, Int(fileSize - offset))
+
+        guard maxRead > 0 else {
+            throw PageReaderError.ioError("No data available at offset \(offset)")
+        }
+
+        let headerData = try reader.read(at: Int(offset), count: maxRead)
 
         let thriftReader = ThriftReader(data: headerData)
         let header = try thriftReader.readPageHeader()
