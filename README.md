@@ -10,10 +10,19 @@ A native Swift implementation of the Apache Parquet columnar storage format.
 
 🚧 **In Active Development** - Phase 1 (Practical Reader)
 
-Current milestone: **M1.5 - Basic I/O Layer** 🚧
-Last completed: M1.4 - Schema Representation ✅
+Current milestone: **M1.6 - Metadata Parsing** ✅
+Last completed: M1.5 - Basic I/O Layer ✅
 
 See [implementation roadmap](docs/implementation-roadmap.md) for detailed development plan.
+
+### ⚠️ Pre-1.0 API Changes
+
+This library is under active development and the API may change between milestones:
+
+- **M1.6 (Current)**: `ParquetFileReader.readMetadata()` returns `FileMetadata` wrapper instead of raw `ThriftFileMetaData`. Use the new wrapper types for cleaner, more idiomatic Swift API.
+  - Before: `let thrift = try ParquetFileReader.readMetadata(from: url)` → `ThriftFileMetaData`
+  - After: `let metadata = try ParquetFileReader.readMetadata(from: url)` → `FileMetadata`
+  - Migration: Most properties have the same names. Access schema via `metadata.schema` directly.
 
 ## Features (Planned)
 
@@ -22,7 +31,8 @@ See [implementation roadmap](docs/implementation-roadmap.md) for detailed develo
 - ✅ Core type system
 - ✅ Thrift metadata parsing (Compact Binary Protocol)
 - ✅ Schema representation and tree building
-- 🚧 Basic I/O layer (file reading)
+- ✅ Basic I/O layer (file reading, buffered access)
+- ✅ Metadata wrapper API (idiomatic Swift types)
 - 🚧 PLAIN + DICTIONARY encoding
 - 🚧 Optional columns (null handling)
 - 🚧 GZIP + Snappy compression

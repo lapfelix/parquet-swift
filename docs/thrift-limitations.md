@@ -158,6 +158,48 @@ These fields **are read but ignored** during deserialization:
 
 ---
 
+## Metadata Wrapper Layer (M1.6)
+
+### Fields Not Yet Exposed in Swift API
+
+The metadata wrapper layer (M1.6) provides idiomatic Swift APIs around Thrift metadata.
+Some fields are parsed by Thrift but not yet exposed through the wrapper API:
+
+#### FileMetadata
+- ✅ `version` - Exposed
+- ✅ `schema` - Exposed as `Schema` object
+- ✅ `numRows` - Exposed
+- ✅ `rowGroups` - Exposed as `[RowGroupMetadata]`
+- ✅ `keyValueMetadata` - Exposed as `[String: String]`
+- ✅ `createdBy` - Exposed
+- ⚠️ `columnOrders` - Exposed as raw `[ThriftColumnOrder]?` (not yet wrapped)
+  - **Status:** Low priority, rarely used in Phase 1
+  - **TODO:** Create `ColumnOrder` wrapper type in Phase 2+
+
+#### ColumnMetadata
+- ✅ `physicalType`, `encodings`, `codec`, `path` - All exposed
+- ✅ `numValues`, `totalUncompressedSize`, `totalCompressedSize` - All exposed
+- ✅ `dataPageOffset`, `dictionaryPageOffset`, `indexPageOffset` - All exposed
+- ✅ `statistics` - Exposed as `Statistics` wrapper
+- ✅ `keyValueMetadata` - Exposed as `[String: String]`
+- ✅ `encodingStats` - Exposed as `[EncodingStat]`
+- ✅ `bloomFilterOffset`, `bloomFilterLength` - Exposed (not usable yet)
+- ⚠️ `sizeStatistics` - Not exposed
+  - **Status:** Thrift struct exists but not read (Phase 4)
+  - **Impact:** Cannot estimate memory requirements upfront
+
+#### RowGroupMetadata
+- ✅ `numRows`, `totalByteSize`, `columns` - All exposed
+- ✅ `fileOffset`, `totalCompressedSize`, `ordinal` - All exposed
+- ⚠️ `sortingColumns` - Not exposed
+  - **Status:** Thrift reads but wrapper doesn't expose (Phase 2+)
+  - **Impact:** Cannot determine if row group is sorted
+
+**Note:** All unexposed fields can still be accessed via the internal `thrift` property
+if needed for advanced use cases. The wrapper API focuses on common Phase 1 operations.
+
+---
+
 ## Known Limitations
 
 ### 1. Thrift Protocol
@@ -269,7 +311,7 @@ The implementation supports **forward compatibility** through:
 - **Parquet Format Version:** 2.x (latest as of 2025)
 - **Thrift Source:** `apache/arrow/cpp/src/parquet/parquet.thrift`
 - **Implementation Date:** 2025-11-02
-- **Phase:** Phase 1 (M1.3 Complete)
+- **Phase:** Phase 1 (M1.6 Complete - Metadata Parsing)
 
 ---
 
@@ -283,4 +325,4 @@ The implementation supports **forward compatibility** through:
 ---
 
 **Last Updated:** 2025-11-02
-**Status:** M1.3 Complete - Thrift Integration ✅
+**Status:** M1.6 Complete - Metadata Parsing ✅

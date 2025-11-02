@@ -33,14 +33,14 @@ final class IntegrationTests: XCTestCase {
         // Verify basic metadata
         XCTAssertEqual(metadata.version, 1, "Expected Parquet format version 1")
         XCTAssertGreaterThan(metadata.numRows, 0, "File should have rows")
-        XCTAssertGreaterThan(metadata.schema.count, 0, "File should have schema elements")
-        XCTAssertGreaterThan(metadata.rowGroups.count, 0, "File should have row groups")
+        XCTAssertGreaterThan(metadata.schema.columnCount, 0, "File should have schema columns")
+        XCTAssertGreaterThan(metadata.numRowGroups, 0, "File should have row groups")
 
         print("File metadata:")
         print("  Version: \(metadata.version)")
         print("  Rows: \(metadata.numRows)")
-        print("  Schema elements: \(metadata.schema.count)")
-        print("  Row groups: \(metadata.rowGroups.count)")
+        print("  Schema columns: \(metadata.schema.columnCount)")
+        print("  Row groups: \(metadata.numRowGroups)")
         if let createdBy = metadata.createdBy {
             print("  Created by: \(createdBy)")
         }
@@ -118,11 +118,11 @@ final class IntegrationTests: XCTestCase {
 
         // Check first column chunk
         if let firstChunk = firstRowGroup.columns.first,
-           let colMetadata = firstChunk.metaData {
+           let colMetadata = firstChunk.metadata {
             print("\n  First column:")
-            print("    Type: \(colMetadata.type.name)")
-            print("    Codec: \(colMetadata.codec.name)")
-            print("    Encodings: \(colMetadata.encodings.map { $0.name }.joined(separator: ", "))")
+            print("    Type: \(colMetadata.physicalType.description)")
+            print("    Codec: \(colMetadata.codec.description)")
+            print("    Encodings: \(colMetadata.encodings.map { $0.description }.joined(separator: ", "))")
             print("    Num values: \(colMetadata.numValues)")
             print("    Compressed size: \(colMetadata.totalCompressedSize)")
 
