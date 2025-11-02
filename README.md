@@ -10,7 +10,8 @@ A native Swift implementation of the Apache Parquet columnar storage format.
 
 🚧 **In Active Development** - Phase 1 (Practical Reader)
 
-Current milestone: **M1.1 - Project Setup** ✅
+Current milestone: **M1.5 - Basic I/O Layer** 🚧
+Last completed: M1.4 - Schema Representation ✅
 
 See [implementation roadmap](docs/implementation-roadmap.md) for detailed development plan.
 
@@ -18,9 +19,10 @@ See [implementation roadmap](docs/implementation-roadmap.md) for detailed develo
 
 ### Phase 1 (10 weeks) - Practical Reader
 - ✅ Project setup and architecture
-- 🚧 Core type system
-- 🚧 Thrift metadata parsing
-- 🚧 Schema representation
+- ✅ Core type system
+- ✅ Thrift metadata parsing (Compact Binary Protocol)
+- ✅ Schema representation and tree building
+- 🚧 Basic I/O layer (file reading)
 - 🚧 PLAIN + DICTIONARY encoding
 - 🚧 Optional columns (null handling)
 - 🚧 GZIP + Snappy compression
@@ -188,5 +190,5 @@ Licensed under the Apache License, Version 2.0. See [LICENSE](LICENSE) for detai
 ---
 
 **Status**: Pre-alpha, active development
-**Current Phase**: Phase 1 - Project Setup ✅
-**Next Milestone**: M1.2 - Core Type System
+**Current Phase**: Phase 1 - Practical Reader 🚧
+**Next Milestone**: M1.5 - Basic I/O Layer

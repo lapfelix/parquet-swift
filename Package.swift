@@ -36,7 +36,7 @@ let package = Package(
             dependencies: ["Parquet"],
             path: "Tests/ParquetTests",
             resources: [
-                .copy("Resources/TestData")
+                .copy("Fixtures")
             ]
         ),
     ]
