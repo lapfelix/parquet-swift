@@ -11,8 +11,10 @@ import Foundation
 ///
 /// **Use concrete readers instead**:
 /// - `Int32ColumnReader` for Int32 columns
-/// - `Int64ColumnReader` for Int64 columns (TODO)
-/// - etc.
+/// - `Int64ColumnReader` for Int64 columns
+/// - `FloatColumnReader` for Float columns
+/// - `DoubleColumnReader` for Double columns
+/// - `StringColumnReader` for String (UTF-8) columns
 ///
 /// This class is kept as documentation of the intended API and may be made
 /// functional in a future phase with a different decoder architecture.
@@ -190,9 +192,11 @@ public final class ColumnReader<T> {
         fatalError("""
             ColumnReader<T> cannot be used directly because PlainDecoder uses type-specific extensions.
             Use concrete readers instead:
-            - Int32ColumnReader for Int32
-            - Int64ColumnReader for Int64 (TODO)
-            - etc.
+            - Int32ColumnReader for Int32 columns
+            - Int64ColumnReader for Int64 columns
+            - FloatColumnReader for Float columns
+            - DoubleColumnReader for Double columns
+            - StringColumnReader for String (UTF-8) columns
             """)
     }
 
