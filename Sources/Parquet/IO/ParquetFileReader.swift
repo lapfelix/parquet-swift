@@ -21,64 +21,80 @@ public struct ParquetFileReader {
     /// The magic bytes that identify a Parquet file.
     public static let magic: Data = Data([0x50, 0x41, 0x52, 0x31]) // "PAR1"
 
-    /// Reads the FileMetaData from a Parquet file.
+    /// Reads the FileMetaData from a Parquet file using efficient I/O.
     ///
     /// - Parameter url: The URL of the Parquet file
     /// - Returns: The deserialized FileMetaData
-    /// - Throws: ParquetFileError if the file is invalid or cannot be read
+    /// - Throws: ParquetFileError or IOError if the file is invalid or cannot be read
     public static func readMetadata(from url: URL) throws -> ThriftFileMetaData {
-        let data = try Data(contentsOf: url)
-        return try readMetadata(from: data)
+        let file = try FileRandomAccessFile(url: url)
+        defer { try? file.close() }
+
+        let reader = BufferedReader(file: file)
+        return try readMetadata(from: reader)
     }
 
-    /// Reads the FileMetaData from Parquet file data.
+    /// Reads the FileMetaData from a BufferedReader.
     ///
-    /// - Parameter data: The complete file data
+    /// - Parameter reader: The buffered reader positioned at the start of the file
     /// - Returns: The deserialized FileMetaData
-    /// - Throws: ParquetFileError if the data is invalid
-    public static func readMetadata(from data: Data) throws -> ThriftFileMetaData {
+    /// - Throws: ParquetFileError or IOError if the file is invalid
+    public static func readMetadata(from reader: BufferedReader) throws -> ThriftFileMetaData {
+        let fileSize = try reader.fileSize
+
         // Minimum Parquet file size: 12 bytes (header + footer length + magic)
-        guard data.count >= 12 else {
-            throw ParquetFileError.invalidFile("File too small to be a Parquet file (\(data.count) bytes)")
+        guard fileSize >= 12 else {
+            throw ParquetFileError.invalidFile("File too small to be a Parquet file (\(fileSize) bytes)")
         }
 
         // Check header magic
-        let headerMagic = data.prefix(4)
+        let headerMagic = try reader.read(at: 0, count: 4)
         guard headerMagic == magic else {
             throw ParquetFileError.invalidFile("Invalid header magic bytes")
         }
 
         // Check footer magic
-        let footerMagic = data.suffix(4)
+        let footerMagic = try reader.read(at: fileSize - 4, count: 4)
         guard footerMagic == magic else {
             throw ParquetFileError.invalidFile("Invalid footer magic bytes")
         }
 
         // Read footer length (4 bytes before the trailing magic)
-        let footerLengthOffset = data.count - 8
-        let footerLengthBytes = data.subdata(in: footerLengthOffset..<(footerLengthOffset + 4))
-        let footerLength = footerLengthBytes.withUnsafeBytes { $0.load(as: UInt32.self).littleEndian }
+        let footerLength = try reader.readUInt32LE(at: fileSize - 8)
 
         guard footerLength > 0 else {
             throw ParquetFileError.invalidFile("Footer length is zero")
         }
 
         // Calculate metadata offset
-        let metadataOffset = data.count - 8 - Int(footerLength)
+        let metadataOffset = fileSize - 8 - Int(footerLength)
         guard metadataOffset >= 4 else {
             throw ParquetFileError.invalidFile("Invalid footer length: \(footerLength)")
         }
 
-        // Extract metadata bytes
-        let metadataBytes = data.subdata(in: metadataOffset..<footerLengthOffset)
+        // Read metadata bytes
+        let metadataBytes = try reader.read(at: metadataOffset, count: Int(footerLength))
 
         // Deserialize using ThriftReader
-        let reader = ThriftReader(data: metadataBytes)
+        let thriftReader = ThriftReader(data: metadataBytes)
         do {
-            return try reader.readFileMetaData()
+            return try thriftReader.readFileMetaData()
         } catch {
             throw ParquetFileError.invalidFile("Failed to parse FileMetaData: \(error)")
         }
+    }
+
+    /// Reads the FileMetaData from in-memory Parquet file data.
+    ///
+    /// For files on disk, use `readMetadata(from: URL)` instead for better performance.
+    ///
+    /// - Parameter data: The complete file data
+    /// - Returns: The deserialized FileMetaData
+    /// - Throws: ParquetFileError if the data is invalid
+    public static func readMetadata(from data: Data) throws -> ThriftFileMetaData {
+        let memFile = MemoryRandomAccessFile(data: data)
+        let reader = BufferedReader(file: memFile)
+        return try readMetadata(from: reader)
     }
 
     /// Reads and builds the schema from a Parquet file.
