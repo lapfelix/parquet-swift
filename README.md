@@ -28,7 +28,7 @@ Current implementation supports:
 - ✅ Required (non-nullable) primitive columns
 - ✅ **Nullable columns (definition level support)** ✨
 - ✅ All primitive types: Int32, Int64, Float, Double, String
-- ❌ Repeated columns (repetition levels)
+- 🚧 Repeated columns (repetition level infrastructure complete, array reading pending)
 - ❌ Nested types (lists, maps, structs)
 
 See [docs/limitations.md](docs/limitations.md) for complete details and workarounds.
@@ -64,7 +64,9 @@ This library is under active development and the API may change between mileston
 ### Phase 3 (In Progress 🚧) - Advanced Reader Features
 - ✅ **Definition levels** (nullable columns) - ALL primitive types!
 - ✅ **PyArrow compatibility** - Fixed critical Thrift parsing bugs!
-- 🚧 Repetition levels (repeated columns)
+- 🚧 **Repetition levels** (infrastructure complete, array reading pending)
+  - ✅ Decode repetition levels from pages
+  - ⏳ Use repetition levels to reconstruct arrays
 - 🚧 Nested types (lists, maps, structs)
 
 **Still Deferred:**

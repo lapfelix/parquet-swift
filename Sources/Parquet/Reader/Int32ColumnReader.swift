@@ -8,14 +8,19 @@ import Foundation
 ///
 /// Supports both PLAIN and dictionary encoding, with nullable columns.
 ///
-/// # Phase 3 Features
+/// # Current Features
 ///
 /// - ✅ Required columns (non-nullable)
 /// - ✅ Nullable columns (definition levels)
 /// - ✅ PLAIN and dictionary encoding
+/// - ✅ Repetition level decoding (infrastructure for repeated columns)
 ///
 /// Returns `[Int32?]` where `nil` represents NULL values in nullable columns.
 /// For required columns, all values will be non-nil.
+///
+/// **Note:** Repetition levels are decoded from pages but array reconstruction
+/// logic is not yet implemented. Repeated columns will read individual values
+/// sequentially rather than grouped into arrays.
 ///
 /// # Usage
 ///

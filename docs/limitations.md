@@ -160,7 +160,9 @@ Phase 3 implementation supports:
 - ✅ Definition level decoding for nullable columns
 
 **What doesn't work yet:**
-- ❌ **Repeated columns** (maxRepetitionLevel > 0) - Future Phase
+- 🚧 **Repeated columns** (maxRepetitionLevel > 0) - Infrastructure complete, array reading pending
+  - ✅ Repetition levels decoded from pages
+  - ⏳ Array reconstruction logic not yet implemented
 
 **Phase 3 Achievement:**
 
@@ -169,15 +171,16 @@ to determine which values are NULL. Both PLAIN and dictionary encoding work corr
 nullable columns.
 
 Still **does not work** with:
-- Repeated columns (repetition levels) - **Future Phase**
-- Nested types (lists, maps, structs) - Phase 4+
+- 🚧 Repeated columns (repetition levels) - **Infrastructure complete**, array reading pending
+- ❌ Nested types (lists, maps, structs) - Phase 4+
 
 Completed milestones:
 1. ✅ **Dictionary encoding for required columns** (Phase 2.1)
 2. ✅ **Extend dictionary encoding to all types** (Phase 2.2)
 3. ✅ **Definition levels** (nullable columns) (Phase 3) ✨ DONE!
 4. ✅ **PyArrow compatibility** (Python ecosystem) ✨ DONE!
+5. 🚧 **Repetition level infrastructure** (Phase 3) - Decoding complete, array reading pending
 
 Remaining priorities:
-5. **Repetition levels** (repeated columns) - Future Phase
-6. **Nested types** (lists, maps, structs) - Phase 4+
+6. **Array reconstruction** (use repetition levels to build arrays) - Next step
+7. **Nested types** (lists, maps, structs) - Phase 4+
