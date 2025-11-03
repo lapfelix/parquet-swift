@@ -222,6 +222,12 @@ public enum ColumnReaderError: Error, Equatable {
 
     /// Type mismatch
     case typeMismatch(String)
+
+    /// Missing dictionary
+    case missingDictionary(String)
+
+    /// Internal error (shouldn't happen)
+    case internalError(String)
 }
 
 extension ColumnReaderError: CustomStringConvertible {
@@ -235,6 +241,10 @@ extension ColumnReaderError: CustomStringConvertible {
             return "Decoding error: \(msg)"
         case .typeMismatch(let msg):
             return "Type mismatch: \(msg)"
+        case .missingDictionary(let msg):
+            return "Missing dictionary: \(msg)"
+        case .internalError(let msg):
+            return "Internal error: \(msg)"
         }
     }
 }

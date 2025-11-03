@@ -134,13 +134,57 @@ public struct Column {
     }
 
     /// Maximum definition level for this column
+    ///
+    /// Computed by walking the full path from root to leaf and summing
+    /// definition level contributions from all nodes (including optional ancestors).
+    ///
+    /// Example:
+    /// ```
+    /// optional group foo {
+    ///   required int32 bar;
+    /// }
+    /// ```
+    /// Column "bar" has maxDefinitionLevel = 1 (from optional group "foo")
     public var maxDefinitionLevel: Int {
-        return repetitionType.maxDefinitionLevel
+        var level = 0
+        var current: SchemaElement? = element
+
+        // Walk up the tree summing definition level contributions
+        while let node = current {
+            if let repetition = node.repetitionType {
+                level += repetition.maxDefinitionLevel
+            }
+            current = node.parent
+        }
+
+        return level
     }
 
     /// Maximum repetition level for this column
+    ///
+    /// Computed by walking the full path from root to leaf and summing
+    /// repetition level contributions from all nodes (including repeated ancestors).
+    ///
+    /// Example:
+    /// ```
+    /// repeated group items {
+    ///   required int32 id;
+    /// }
+    /// ```
+    /// Column "id" has maxRepetitionLevel = 1 (from repeated group "items")
     public var maxRepetitionLevel: Int {
-        return repetitionType.maxRepetitionLevel
+        var level = 0
+        var current: SchemaElement? = element
+
+        // Walk up the tree summing repetition level contributions
+        while let node = current {
+            if let repetition = node.repetitionType {
+                level += repetition.maxRepetitionLevel
+            }
+            current = node.parent
+        }
+
+        return level
     }
 }
 

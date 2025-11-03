@@ -143,8 +143,17 @@ public final class RowGroupReader {
             throw RowGroupReaderError.unsupportedType("Column metadata missing")
         }
 
+        guard let column = schema.column(at: index) else {
+            throw RowGroupReaderError.unsupportedType("Column schema missing for index \(index)")
+        }
+
         let codec = try CodecFactory.codec(for: columnMetadata.codec)
-        return try Int32ColumnReader(file: file, columnMetadata: columnMetadata, codec: codec)
+        return try Int32ColumnReader(
+            file: file,
+            columnMetadata: columnMetadata,
+            codec: codec,
+            column: column
+        )
     }
 
     private func createInt64ColumnReader(at index: Int) throws -> Int64ColumnReader {

@@ -126,7 +126,8 @@ final class Int32ColumnReaderTests: XCTestCase {
         let reader = try Int32ColumnReader(
             file: file,
             columnMetadata: columnMetadata,
-            codec: codec
+            codec: codec,
+            column: column
         )
 
         // Read values
@@ -184,6 +185,11 @@ final class Int32ColumnReaderTests: XCTestCase {
             return
         }
 
+        guard let column = metadata.schema.column(at: int32ColumnIndex) else {
+            XCTFail("Column schema missing for index \(int32ColumnIndex)")
+            return
+        }
+
         let codec = try CodecFactory.codec(for: columnMetadata.codec)
         let file = try FileRandomAccessFile(url: fileURL)
         defer { try? file.close() }
@@ -191,7 +197,8 @@ final class Int32ColumnReaderTests: XCTestCase {
         let reader = try Int32ColumnReader(
             file: file,
             columnMetadata: columnMetadata,
-            codec: codec
+            codec: codec,
+            column: column
         )
 
         // Read in batches
@@ -254,6 +261,11 @@ final class Int32ColumnReaderTests: XCTestCase {
             return
         }
 
+        guard let column = metadata.schema.column(at: int32ColumnIndex) else {
+            XCTFail("Column schema missing for index \(int32ColumnIndex)")
+            return
+        }
+
         let codec = try CodecFactory.codec(for: columnMetadata.codec)
         let file = try FileRandomAccessFile(url: fileURL)
         defer { try? file.close() }
@@ -261,7 +273,8 @@ final class Int32ColumnReaderTests: XCTestCase {
         let reader = try Int32ColumnReader(
             file: file,
             columnMetadata: columnMetadata,
-            codec: codec
+            codec: codec,
+            column: column
         )
 
         // Read one by one

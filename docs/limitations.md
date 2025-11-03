@@ -136,23 +136,47 @@ See `generate_plain_fixture.py` for reference (PyArrow version that doesn't work
 
 ## Summary
 
-Phase 1/2 implementation supports:
+Phase 2.1 implementation supports:
 - ✅ parquet-mr generated files
 - ✅ PLAIN encoding
-- ✅ UNCOMPRESSED, GZIP, and **Snappy** compression ✨
-- ✅ Required (non-nullable) primitive columns
-- ✅ Types: Int32, Int64, Float, Double, String
+- ✅ **Dictionary encoding (RLE_DICTIONARY, PLAIN_DICTIONARY)** ✨ NEW!
+- ✅ UNCOMPRESSED, GZIP, and **Snappy** compression
+- ✅ **Required (non-nullable)** primitive columns
+- ✅ Types: Int32 (others coming soon)
 
-**Major Improvement**: Snappy compression support unblocks ~80% of production Parquet files!
+**Major Improvements**:
+- ✅ Snappy compression support (~80% of production files)
+- ✅ **Dictionary encoding for required columns** (~80% of string columns when combined with required constraint)
+
+### Dictionary Encoding - Phase 2.1 Scope
+
+**What works:**
+- ✅ Required columns with dictionary encoding (Int32 currently)
+- ✅ Both RLE_DICTIONARY and PLAIN_DICTIONARY encodings
+- ✅ Full overflow protection in RLE decoder
+- ✅ Strict byte-exact validation
+
+**What doesn't work yet:**
+- ❌ **Nullable columns** (maxDefinitionLevel > 0) - Phase 3
+- ❌ **Repeated columns** (maxRepetitionLevel > 0) - Phase 3
+- ❌ Other types (Int64, Float, Double, String) - Phase 2.2
+
+**Why the limitation?**
+
+Nullable and repeated columns encode definition/repetition levels before the data in each page.
+Phase 2.1 skips this level decoding step, so it only works for required columns where no
+level streams are present.
 
 Still **does not work** with:
-- Dictionary encoding (strings, enums) - most common for string columns
-- Nullable columns (definition levels) - most schemas have nulls
+- Nullable columns (definition levels) - **Phase 3**
+- Repeated columns (repetition levels) - **Phase 3**
 - PyArrow tools (Python ecosystem) - metadata parsing incompatibility
-- Nested types (lists, maps, structs)
+- Nested types (lists, maps, structs) - Phase 4+
 
 Remaining Phase 2 priorities:
-1. **Dictionary encoding** (unblocks string columns)
-2. **Definition levels** (nullable columns)
-3. **PyArrow compatibility** (unblocks Python ecosystem)
-4. **Nested types** (lists, maps, structs)
+1. ✅ **Dictionary encoding for required columns** (DONE - Phase 2.1)
+2. **Extend dictionary encoding to all types** (Int64, Float, Double, String) - Phase 2.2
+3. **Definition levels** (nullable columns) - Phase 3
+4. **Repetition levels** (repeated columns) - Phase 3
+5. **PyArrow compatibility** (unblocks Python ecosystem) - TBD
+6. **Nested types** (lists, maps, structs) - Phase 4+
