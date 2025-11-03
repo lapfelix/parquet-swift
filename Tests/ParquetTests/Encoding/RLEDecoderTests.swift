@@ -18,14 +18,14 @@ final class RLEDecoderTests: XCTestCase {
 
     func testMissingBitWidth() throws {
         let data = Data() // Empty
-        XCTAssertThrowsError(try decoder.decodeIndices(from: data, numValues: 10)) { error in
+        XCTAssertThrowsError(try decoder.decodeIndicesWithLengthPrefix(from: data, numValues: 10)) { error in
             XCTAssertEqual(error as? RLEError, .missingBitWidth)
         }
     }
 
     func testMissingLengthPrefix() throws {
         let data = Data([0x04]) // Only bit-width, no length
-        XCTAssertThrowsError(try decoder.decodeIndices(from: data, numValues: 10)) { error in
+        XCTAssertThrowsError(try decoder.decodeIndicesWithLengthPrefix(from: data, numValues: 10)) { error in
             XCTAssertEqual(error as? RLEError, .missingLengthPrefix)
         }
     }
@@ -34,7 +34,7 @@ final class RLEDecoderTests: XCTestCase {
         var data = Data([0x21]) // bit-width: 33 (invalid, max is 32)
         data.append(contentsOf: [0x00, 0x00, 0x00, 0x00]) // length: 0
 
-        XCTAssertThrowsError(try decoder.decodeIndices(from: data, numValues: 0)) { error in
+        XCTAssertThrowsError(try decoder.decodeIndicesWithLengthPrefix(from: data, numValues: 0)) { error in
             XCTAssertEqual(error as? RLEError, .invalidBitWidth(33))
         }
     }
@@ -44,7 +44,7 @@ final class RLEDecoderTests: XCTestCase {
         data.append(contentsOf: [0x0A, 0x00, 0x00, 0x00]) // length: 10
         data.append(Data(repeating: 0, count: 5)) // Only 5 bytes (need 10!)
 
-        XCTAssertThrowsError(try decoder.decodeIndices(from: data, numValues: 10)) { error in
+        XCTAssertThrowsError(try decoder.decodeIndicesWithLengthPrefix(from: data, numValues: 10)) { error in
             guard case RLEError.truncatedData(expected: 15, got: 10) = error else {
                 XCTFail("Expected truncatedData error, got \(error)")
                 return
@@ -58,7 +58,7 @@ final class RLEDecoderTests: XCTestCase {
         data.append(Data(repeating: 0, count: 2)) // 2 bytes of runs
         data.append(contentsOf: [0xFF, 0xFF]) // EXTRA BYTES (corruption!)
 
-        XCTAssertThrowsError(try decoder.decodeIndices(from: data, numValues: 1)) { error in
+        XCTAssertThrowsError(try decoder.decodeIndicesWithLengthPrefix(from: data, numValues: 1)) { error in
             guard case RLEError.extraneousData(expected: 7, got: 9) = error else {
                 XCTFail("Expected extraneousData error, got \(error)")
                 return
@@ -72,7 +72,7 @@ final class RLEDecoderTests: XCTestCase {
         var data = Data([0x00]) // bit-width: 0
         data.append(contentsOf: [0x00, 0x00, 0x00, 0x00]) // length: 0 (no runs)
 
-        let indices = try decoder.decodeIndices(from: data, numValues: 100)
+        let indices = try decoder.decodeIndicesWithLengthPrefix(from: data, numValues: 100)
         XCTAssertEqual(indices.count, 100)
         XCTAssertEqual(indices, Array(repeating: 0, count: 100))
     }
@@ -82,7 +82,7 @@ final class RLEDecoderTests: XCTestCase {
         data.append(contentsOf: [0x01, 0x00, 0x00, 0x00]) // length: 1
         data.append(contentsOf: [0xC8, 0x01]) // RLE: (100 << 1) = 200 = 0xC8 0x01 (2 bytes!)
 
-        XCTAssertThrowsError(try decoder.decodeIndices(from: data, numValues: 100)) { error in
+        XCTAssertThrowsError(try decoder.decodeIndicesWithLengthPrefix(from: data, numValues: 100)) { error in
             // varint 0xC8 0x01 is 2 bytes, but we declared length: 1
             // This triggers extraneousData (buffer is 7 bytes, expected 6)
             guard case RLEError.extraneousData(expected: 6, got: 7) = error else {
@@ -97,7 +97,7 @@ final class RLEDecoderTests: XCTestCase {
         data.append(contentsOf: [0x02, 0x00, 0x00, 0x00]) // length: 2
         data.append(contentsOf: [0xC8, 0x01]) // RLE: 100 values (varint = 2 bytes)
 
-        let indices = try decoder.decodeIndices(from: data, numValues: 100)
+        let indices = try decoder.decodeIndicesWithLengthPrefix(from: data, numValues: 100)
         XCTAssertEqual(indices.count, 100)
         XCTAssertEqual(indices, Array(repeating: 0, count: 100))
     }
@@ -112,7 +112,7 @@ final class RLEDecoderTests: XCTestCase {
         // Value: 5 (1 byte for bit-width 4)
         data.append(contentsOf: [0x14, 0x05])
 
-        let indices = try decoder.decodeIndices(from: data, numValues: 10)
+        let indices = try decoder.decodeIndicesWithLengthPrefix(from: data, numValues: 10)
         XCTAssertEqual(indices, Array(repeating: 5, count: 10))
     }
 
@@ -124,7 +124,7 @@ final class RLEDecoderTests: XCTestCase {
         // Run 2: 5 repetitions of value 7
         data.append(contentsOf: [0x0A, 0x07]) // (5 << 1) = 10, value=7
 
-        let indices = try decoder.decodeIndices(from: data, numValues: 10)
+        let indices = try decoder.decodeIndicesWithLengthPrefix(from: data, numValues: 10)
         XCTAssertEqual(indices, [3, 3, 3, 3, 3, 7, 7, 7, 7, 7])
     }
 
@@ -145,7 +145,7 @@ final class RLEDecoderTests: XCTestCase {
         let packed = packBits3([0, 1, 2, 3, 4, 5, 6, 7])
         data.append(contentsOf: packed)
 
-        let indices = try decoder.decodeIndices(from: data, numValues: 8)
+        let indices = try decoder.decodeIndicesWithLengthPrefix(from: data, numValues: 8)
         XCTAssertEqual(indices, [0, 1, 2, 3, 4, 5, 6, 7])
     }
 
@@ -166,7 +166,7 @@ final class RLEDecoderTests: XCTestCase {
         data.append(contentsOf: packed) // All 8 bytes
 
         // Only request 10 values (should trim padding)
-        let indices = try decoder.decodeIndices(from: data, numValues: 10)
+        let indices = try decoder.decodeIndicesWithLengthPrefix(from: data, numValues: 10)
         XCTAssertEqual(indices.count, 10)
         XCTAssertEqual(indices, [0,1,2,3,4,5,6,7,8,9])
     }
@@ -198,7 +198,7 @@ final class RLEDecoderTests: XCTestCase {
         data.append(contentsOf: [UInt8(varint.count), 0x00, 0x00, 0x00])
         data.append(varint)
 
-        XCTAssertThrowsError(try decoder.decodeIndices(from: data, numValues: 10)) { error in
+        XCTAssertThrowsError(try decoder.decodeIndicesWithLengthPrefix(from: data, numValues: 10)) { error in
             guard case RLEError.invalidRunHeader(let msg) = error else {
                 XCTFail("Expected invalidRunHeader error, got \(error)")
                 return
@@ -231,7 +231,7 @@ final class RLEDecoderTests: XCTestCase {
         data.append(contentsOf: [UInt8(varint.count), 0x00, 0x00, 0x00])
         data.append(varint)
 
-        XCTAssertThrowsError(try decoder.decodeIndices(from: data, numValues: 10)) { error in
+        XCTAssertThrowsError(try decoder.decodeIndicesWithLengthPrefix(from: data, numValues: 10)) { error in
             guard case RLEError.invalidRunHeader(let msg) = error else {
                 XCTFail("Expected invalidRunHeader error, got \(error)")
                 return
@@ -260,7 +260,7 @@ final class RLEDecoderTests: XCTestCase {
 
         // This will fail (but not with "too large" - rather with truncated data)
         // because we declared 10 bytes but need an additional value byte
-        XCTAssertThrowsError(try decoder.decodeIndices(from: data, numValues: 10)) { error in
+        XCTAssertThrowsError(try decoder.decodeIndicesWithLengthPrefix(from: data, numValues: 10)) { error in
             XCTAssertTrue(error is RLEError, "Expected RLEError, got \(error)")
         }
     }
@@ -290,7 +290,7 @@ final class RLEDecoderTests: XCTestCase {
         data.append(contentsOf: [UInt8(varint.count), 0x00, 0x00, 0x00])
         data.append(varint)
 
-        XCTAssertThrowsError(try decoder.decodeIndices(from: data, numValues: 10)) { error in
+        XCTAssertThrowsError(try decoder.decodeIndicesWithLengthPrefix(from: data, numValues: 10)) { error in
             guard case RLEError.invalidRunHeader(let msg) = error else {
                 XCTFail("Expected invalidRunHeader error, got \(error)")
                 return
@@ -309,7 +309,7 @@ final class RLEDecoderTests: XCTestCase {
         // Extra bytes declared but not consumed (3 bytes of garbage)
         data.append(contentsOf: [0xFF, 0xFF, 0xFF])
 
-        XCTAssertThrowsError(try decoder.decodeIndices(from: data, numValues: 10)) { error in
+        XCTAssertThrowsError(try decoder.decodeIndicesWithLengthPrefix(from: data, numValues: 10)) { error in
             guard case RLEError.unconsumedData(expectedBytes: 5, consumedBytes: 2) = error else {
                 XCTFail("Expected unconsumedData error, got \(error)")
                 return
@@ -324,10 +324,73 @@ final class RLEDecoderTests: XCTestCase {
         data.append(contentsOf: [0xC8, 0x01]) // (100 << 1) = 200
         // Missing: value byte
 
-        XCTAssertThrowsError(try decoder.decodeIndices(from: data, numValues: 100)) { error in
+        XCTAssertThrowsError(try decoder.decodeIndicesWithLengthPrefix(from: data, numValues: 100)) { error in
             // Should fail because we can't read the value
             XCTAssertTrue(error is RLEError)
         }
+    }
+
+    // MARK: - Data Page Format Tests (No Length Prefix)
+
+    func testDataPageFormatSimpleRLE() throws {
+        // Data page format: <bit-width> <runs...>
+        // No 4-byte length prefix!
+        var data = Data([0x04]) // bit-width: 4
+        data.append(contentsOf: [0x14, 0x00]) // RLE: (10 << 1) = 20, value: 0
+
+        let indices = try decoder.decodeIndices(from: data, numValues: 10)
+        XCTAssertEqual(indices.count, 10)
+        XCTAssertTrue(indices.allSatisfy { $0 == 0 })
+    }
+
+    func testDataPageFormatSimpleBitPacked() throws {
+        // Data page format: <bit-width> <runs...>
+        var data = Data([0x03]) // bit-width: 3
+        data.append(contentsOf: [0x03]) // Bit-packed: (1 << 1) | 1 = 3 (1 group = 8 values)
+
+        // Pack 8 values with 3 bits each: [0,1,2,3,4,5,6,7]
+        let packed = packBits3([0,1,2,3,4,5,6,7])
+        data.append(packed)
+
+        let indices = try decoder.decodeIndices(from: data, numValues: 8)
+        XCTAssertEqual(indices, [0,1,2,3,4,5,6,7])
+    }
+
+    func testDataPageFormatMultipleRuns() throws {
+        // Data page format with multiple runs
+        var data = Data([0x04]) // bit-width: 4
+
+        // Run 1: RLE - 5 values of 3
+        data.append(contentsOf: [0x0A, 0x03]) // (5 << 1) = 10, value: 3
+
+        // Run 2: RLE - 3 values of 7
+        data.append(contentsOf: [0x06, 0x07]) // (3 << 1) = 6, value: 7
+
+        let indices = try decoder.decodeIndices(from: data, numValues: 8)
+        XCTAssertEqual(indices, [3,3,3,3,3,7,7,7])
+    }
+
+    func testDataPageFormatZeroBitWidth() throws {
+        // Data page format with bit-width 0 (single-value dictionary)
+        var data = Data([0x00]) // bit-width: 0
+        data.append(contentsOf: [0x14]) // RLE: (10 << 1) = 20
+
+        let indices = try decoder.decodeIndices(from: data, numValues: 10)
+        XCTAssertEqual(indices.count, 10)
+        XCTAssertTrue(indices.allSatisfy { $0 == 0 })
+    }
+
+    func testDataPageFormatActualDictionaryData() throws {
+        // This mimics the actual data from alltypes_plain.parquet column 0
+        // Bit-width 3, with bit-packed run
+        var data = Data([0x03]) // bit-width: 3
+        data.append(contentsOf: [0x03]) // Bit-packed: 1 group of 8 values
+        data.append(contentsOf: [0x88, 0xC6, 0xFA]) // Packed data (from real file)
+
+        let indices = try decoder.decodeIndices(from: data, numValues: 8)
+        XCTAssertEqual(indices.count, 8)
+        // Verify we get valid dictionary indices (all should be < 8 for bit-width 3)
+        XCTAssertTrue(indices.allSatisfy { $0 < 8 })
     }
 
     // MARK: - Helper Methods

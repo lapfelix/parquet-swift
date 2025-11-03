@@ -11,14 +11,28 @@ import Foundation
 /// - Definition and repetition levels (future use)
 /// - Boolean values (future use)
 ///
-/// # Format
+/// # Data Page Format (Primary Use)
 ///
-/// Dictionary index streams follow this format:
+/// Dictionary index streams in **data pages** follow this format:
+/// ```
+/// <bit-width: 1 byte>
+/// <runs... (rest of buffer)>
+/// ```
+///
+/// **No length prefix** is present in data pages. Use `decodeIndices()` for this format.
+///
+/// # Legacy Format (Not Used in Data Pages)
+///
+/// Some contexts may use a length-prefixed format:
 /// ```
 /// <bit-width: 1 byte>
 /// <length: 4 bytes little-endian>
 /// <runs: exactly 'length' bytes>
 /// ```
+///
+/// Use `decodeIndicesWithLengthPrefix()` for this format.
+///
+/// # Run Encoding
 ///
 /// Each run is either:
 /// - **Bit-packed**: Header `(count << 1) | 1`, followed by bit-packed values
@@ -31,31 +45,77 @@ import Foundation
 /// - **Bit-width 0**: Single-value dictionary (all indices are 0)
 /// - **Empty runs**: Legal when numValues matches the encoding
 ///
-/// # Validation
-///
-/// This decoder enforces strict byte-exact validation:
-/// - Buffer size must be exactly `5 + length` bytes
-/// - All run data must be consumed (no unconsumed bytes)
-/// - Must decode exactly `numValues` indices
-///
 /// # Reference
 ///
-/// Based on parquet-mr `DictionaryValuesReader` and the Parquet format spec:
-/// https://github.com/apache/parquet-format/blob/master/Encodings.md
+/// Based on Apache Arrow/Parquet C++ implementation:
+/// https://github.com/apache/arrow/blob/main/cpp/src/parquet/encoding.h
 public final class RLEDecoder {
 
     public init() {}
 
     // MARK: - Public API
 
-    /// Decode dictionary indices from encoded data
+    /// Decode dictionary indices from encoded data (data page format)
+    ///
+    /// **Data Page Format** (no length prefix):
+    /// ```
+    /// <bit-width: 1 byte>
+    /// <runs... (rest of buffer)>
+    /// ```
+    ///
+    /// - Parameters:
+    ///   - data: Complete encoded stream (bit-width + runs, NO length prefix)
+    ///   - numValues: Exact number of indices to decode
+    /// - Returns: Exactly `numValues` unsigned dictionary indices
+    /// - Throws: `RLEError` if data is malformed or truncated
+    public func decodeIndices(from data: Data, numValues: Int) throws -> [UInt32] {
+        // Format: <bit-width: 1> <runs... (rest of buffer)>
+        // NOTE: No 4-byte length prefix for dictionary indices in data pages!
+
+        // 1. Extract bit-width (byte 0)
+        guard data.count >= 1 else {
+            throw RLEError.missingBitWidth
+        }
+        let bitWidth = Int(data[0])
+
+        guard bitWidth <= 32 else {
+            throw RLEError.invalidBitWidth(bitWidth)
+        }
+
+        // 2. Extract run data (everything after bit-width)
+        let runData = data.subdata(in: 1..<data.count)
+
+        // 3. Decode based on bit-width
+        if bitWidth == 0 {
+            // Single-value dictionary: all indices are 0
+            return try decodeRunsZeroBitWidth(data: runData, numValues: numValues)
+        } else {
+            // Normal RLE/bit-packed decoding
+            return try decodeRuns(
+                bitWidth: bitWidth,
+                data: runData,
+                numValues: numValues
+            )
+        }
+    }
+
+    /// Decode dictionary indices from encoded data with length prefix (legacy format)
+    ///
+    /// **Legacy Format** (with length prefix):
+    /// ```
+    /// <bit-width: 1 byte>
+    /// <length: 4 bytes LE>
+    /// <runs: exactly 'length' bytes>
+    /// ```
+    ///
+    /// This format is NOT used in modern Parquet data pages - use `decodeIndices()` instead.
     ///
     /// - Parameters:
     ///   - data: Complete encoded stream (bit-width + length + runs)
     ///   - numValues: Exact number of indices to decode
     /// - Returns: Exactly `numValues` unsigned dictionary indices
     /// - Throws: `RLEError` if data is malformed, truncated, or has wrong size
-    public func decodeIndices(from data: Data, numValues: Int) throws -> [UInt32] {
+    public func decodeIndicesWithLengthPrefix(from data: Data, numValues: Int) throws -> [UInt32] {
         // Format: <bit-width: 1> <length: 4 LE> <runs>
 
         // 1. Extract bit-width (byte 0)
@@ -63,6 +123,7 @@ public final class RLEDecoder {
             throw RLEError.missingBitWidth
         }
         let bitWidth = Int(data[0])
+
         guard bitWidth <= 32 else {
             throw RLEError.invalidBitWidth(bitWidth)
         }

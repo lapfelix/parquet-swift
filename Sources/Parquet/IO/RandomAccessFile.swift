@@ -70,7 +70,6 @@ public enum IOError: Error, CustomStringConvertible {
 
 /// Random access file backed by a `FileHandle`.
 public final class FileRandomAccessFile: RandomAccessFile {
-    private let fileHandle: FileHandle
     private let fileURL: URL
     private let _size: Int
 
@@ -86,8 +85,6 @@ public final class FileRandomAccessFile: RandomAccessFile {
         self.fileURL = url
 
         do {
-            self.fileHandle = try FileHandle(forReadingFrom: url)
-
             // Get file size
             let attributes = try FileManager.default.attributesOfItem(atPath: url.path)
             guard let fileSize = attributes[.size] as? Int else {
@@ -120,6 +117,17 @@ public final class FileRandomAccessFile: RandomAccessFile {
         }
 
         do {
+            // Open a new file handle for each read operation
+            // This works around a FileHandle bug where reusing the same handle after seek fails
+            let fileHandle = try FileHandle(forReadingFrom: fileURL)
+            defer {
+                if #available(macOS 10.15, iOS 13.0, *) {
+                    try? fileHandle.close()
+                } else {
+                    fileHandle.closeFile()
+                }
+            }
+
             // Seek to offset
             if #available(macOS 10.15.4, iOS 13.4, *) {
                 try fileHandle.seek(toOffset: UInt64(offset))
@@ -156,19 +164,8 @@ public final class FileRandomAccessFile: RandomAccessFile {
     }
 
     public func close() throws {
-        do {
-            if #available(macOS 10.15, iOS 13.0, *) {
-                try fileHandle.close()
-            } else {
-                fileHandle.closeFile()
-            }
-        } catch {
-            throw IOError.closeFailed(error.localizedDescription)
-        }
-    }
-
-    deinit {
-        try? close()
+        // No-op: We now open/close a FileHandle for each read operation
+        // This works around a FileHandle bug where reusing the same handle fails
     }
 }
 

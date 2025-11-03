@@ -367,4 +367,351 @@ final class IntegrationTests: XCTestCase {
             // File should be closed when reader is deallocated
         }
     }
+
+    // MARK: - Phase 3: Nullable Column Tests
+
+    func testReadDataFromWorkingFile() throws {
+        let fileURL = fixturesURL.appendingPathComponent("datapage_v1-snappy-compressed-checksum.parquet")
+
+        print("\nTesting data reading from datapage_v1-snappy file:")
+
+        let reader = try ParquetFileReader(url: fileURL)
+        defer { try? reader.close() }
+
+        let rowGroup = try reader.rowGroup(at: 0)
+        print("  Row group rows: \(rowGroup.metadata.numRows)")
+
+        // Try to read from column 0 (INT32, PLAIN encoding, no dictionary)
+        let columnReader = try rowGroup.int32Column(at: 0)
+        print("  Column reader created: ✓")
+
+        // Actually try to READ data
+        print("  Attempting to read first value...")
+        if let firstValue = try columnReader.readOne() {
+            print("  First value: \(String(describing: firstValue)) ✓")
+        } else {
+            print("  No values")
+        }
+
+        // Read a few more
+        let batch = try columnReader.readBatch(count: 5)
+        print("  Read batch of \(batch.count) values ✓")
+    }
+
+    func testAlltypesPlainFileAccess() throws {
+        let fileURL = fixturesURL.appendingPathComponent("alltypes_plain.parquet")
+
+        print("\nTesting basic access to alltypes_plain.parquet:")
+
+        // Verify file exists
+        XCTAssertTrue(FileManager.default.fileExists(atPath: fileURL.path),
+                      "Test fixture not found: \(fileURL.path)")
+
+        // Open file
+        let reader = try ParquetFileReader(url: fileURL)
+        defer { try? reader.close() }
+
+        print("  File opened: ✓")
+        print("  Rows: \(reader.metadata.numRows)")
+        print("  Columns: \(reader.metadata.schema.columnCount)")
+
+        // Access row group
+        let rowGroup = try reader.rowGroup(at: 0)
+        print("  Row group accessed: ✓")
+
+        // Check column 0 metadata
+        let col0 = rowGroup.metadata.columns[0]
+        print("\n  Column 0 metadata:")
+        if let meta = col0.metadata {
+            print("    Physical type: \(meta.physicalType)")
+            print("    Codec: \(meta.codec)")
+            print("    Encodings: \(meta.encodings.map { $0.description }.joined(separator: ", "))")
+            print("    Total compressed size: \(meta.totalCompressedSize)")
+            print("    Data page offset: \(meta.dataPageOffset)")
+            if let dictOffset = meta.dictionaryPageOffset {
+                print("    Dictionary page offset: \(dictOffset)")
+            }
+        }
+
+        // Try to create column reader (this is where it might fail)
+        print("\n  Creating column reader...")
+        let columnReader = try rowGroup.int32Column(at: 0)
+        print("  Column reader created: ✓")
+
+        // Try to read one value (this is where it actually fails)
+        print("\n  Reading first value...")
+        if let firstValue = try columnReader.readOne() {
+            print("  First value read: \(String(describing: firstValue))")
+        } else {
+            print("  No values available")
+        }
+    }
+
+    func testNullableColumnsMetadata() throws {
+        let fileURL = fixturesURL.appendingPathComponent("alltypes_plain.parquet")
+
+        // Verify file exists
+        XCTAssertTrue(FileManager.default.fileExists(atPath: fileURL.path),
+                      "Test fixture not found: \(fileURL.path)")
+
+        // Read metadata
+        let metadata = try ParquetFileReader.readMetadata(from: fileURL)
+        let schema = metadata.schema
+
+        print("\nNullable columns file metadata:")
+        print("  Rows: \(metadata.numRows)")
+        print("  Columns: \(schema.columnCount)")
+        if let createdBy = metadata.createdBy {
+            print("  Created by: \(createdBy)")
+        }
+
+        // Verify all columns are nullable (maxDefinitionLevel > 0)
+        var nullableCount = 0
+        print("\nColumn nullability:")
+        for (index, column) in schema.columns.enumerated() {
+            let pathStr = column.path.joined(separator: ".")
+            print("  Column \(index): \(pathStr) (\(column.physicalType.name))", terminator: "")
+            print(" - maxDefLevel: \(column.maxDefinitionLevel), maxRepLevel: \(column.maxRepetitionLevel)")
+
+            if column.maxDefinitionLevel > 0 {
+                nullableCount += 1
+            }
+        }
+
+        print("\nNullable columns: \(nullableCount) of \(schema.columnCount)")
+        XCTAssertGreaterThan(nullableCount, 0, "File should have nullable columns for testing")
+    }
+
+    func testReadNullableInt32Column() throws {
+        let fileURL = fixturesURL.appendingPathComponent("alltypes_plain.parquet")
+        let reader = try ParquetFileReader(url: fileURL)
+        defer { try? reader.close() }
+
+        let rowGroup = try reader.rowGroup(at: 0)
+        let schema = reader.metadata.schema
+
+        // Find the 'id' column (INT32, nullable)
+        guard let idColumn = schema.columns.first(where: { $0.name == "id" }) else {
+            XCTFail("Could not find 'id' column")
+            return
+        }
+
+        guard let columnIndex = schema.columns.firstIndex(where: { $0.name == "id" }) else {
+            XCTFail("Could not find column index")
+            return
+        }
+
+        print("\nReading nullable Int32 column 'id':")
+        print("  Physical type: \(idColumn.physicalType.name)")
+        print("  Max definition level: \(idColumn.maxDefinitionLevel)")
+        print("  Max repetition level: \(idColumn.maxRepetitionLevel)")
+
+        // Read the column
+        let columnReader = try rowGroup.int32Column(at: columnIndex)
+        let values = try columnReader.readAll()
+
+        print("  Values read: \(values.count)")
+        let nullCount = values.filter { $0 == nil }.count
+        let nonNullCount = values.filter { $0 != nil }.count
+        print("  NULL values: \(nullCount)")
+        print("  Non-NULL values: \(nonNullCount)")
+
+        // Print first few values
+        print("  First values: \(values.prefix(10))")
+
+        // Verify results
+        XCTAssertGreaterThan(values.count, 0, "Should read some values")
+        XCTAssertEqual(values.count, Int(rowGroup.metadata.numRows), "Should read all rows")
+
+        // For this test file, we expect some non-null values
+        XCTAssertGreaterThan(nonNullCount, 0, "Should have some non-NULL values")
+    }
+
+    func testReadNullableInt64Column() throws {
+        let fileURL = fixturesURL.appendingPathComponent("alltypes_plain.parquet")
+        let reader = try ParquetFileReader(url: fileURL)
+        defer { try? reader.close() }
+
+        let rowGroup = try reader.rowGroup(at: 0)
+        let schema = reader.metadata.schema
+
+        // Find the 'bigint_col' column (INT64, nullable)
+        guard let columnIndex = schema.columns.firstIndex(where: { $0.name == "bigint_col" }) else {
+            XCTFail("Could not find 'bigint_col' column")
+            return
+        }
+
+        print("\nReading nullable Int64 column 'bigint_col':")
+
+        // Read the column
+        let columnReader = try rowGroup.int64Column(at: columnIndex)
+        let values = try columnReader.readAll()
+
+        let nullCount = values.filter { $0 == nil }.count
+        let nonNullCount = values.filter { $0 != nil }.count
+        print("  Total: \(values.count), NULL: \(nullCount), Non-NULL: \(nonNullCount)")
+        print("  First values: \(values.prefix(10))")
+
+        XCTAssertEqual(values.count, Int(rowGroup.metadata.numRows))
+    }
+
+    func testReadNullableFloatColumn() throws {
+        let fileURL = fixturesURL.appendingPathComponent("alltypes_plain.parquet")
+        let reader = try ParquetFileReader(url: fileURL)
+        defer { try? reader.close() }
+
+        let rowGroup = try reader.rowGroup(at: 0)
+        let schema = reader.metadata.schema
+
+        // Find the 'float_col' column (FLOAT, nullable)
+        guard let columnIndex = schema.columns.firstIndex(where: { $0.name == "float_col" }) else {
+            XCTFail("Could not find 'float_col' column")
+            return
+        }
+
+        print("\nReading nullable Float column 'float_col':")
+
+        // Read the column
+        let columnReader = try rowGroup.floatColumn(at: columnIndex)
+        let values = try columnReader.readAll()
+
+        let nullCount = values.filter { $0 == nil }.count
+        let nonNullCount = values.filter { $0 != nil }.count
+        print("  Total: \(values.count), NULL: \(nullCount), Non-NULL: \(nonNullCount)")
+        print("  First values: \(values.prefix(10))")
+
+        XCTAssertEqual(values.count, Int(rowGroup.metadata.numRows))
+    }
+
+    func testReadNullableDoubleColumn() throws {
+        let fileURL = fixturesURL.appendingPathComponent("alltypes_plain.parquet")
+        let reader = try ParquetFileReader(url: fileURL)
+        defer { try? reader.close() }
+
+        let rowGroup = try reader.rowGroup(at: 0)
+        let schema = reader.metadata.schema
+
+        // Find the 'double_col' column (DOUBLE, nullable)
+        guard let columnIndex = schema.columns.firstIndex(where: { $0.name == "double_col" }) else {
+            XCTFail("Could not find 'double_col' column")
+            return
+        }
+
+        print("\nReading nullable Double column 'double_col':")
+
+        // Read the column
+        let columnReader = try rowGroup.doubleColumn(at: columnIndex)
+        let values = try columnReader.readAll()
+
+        let nullCount = values.filter { $0 == nil }.count
+        let nonNullCount = values.filter { $0 != nil }.count
+        print("  Total: \(values.count), NULL: \(nullCount), Non-NULL: \(nonNullCount)")
+        print("  First values: \(values.prefix(10))")
+
+        XCTAssertEqual(values.count, Int(rowGroup.metadata.numRows))
+    }
+
+    func testReadNullableStringColumn() throws {
+        let fileURL = fixturesURL.appendingPathComponent("alltypes_plain.parquet")
+        let reader = try ParquetFileReader(url: fileURL)
+        defer { try? reader.close() }
+
+        let rowGroup = try reader.rowGroup(at: 0)
+        let schema = reader.metadata.schema
+
+        // Find the 'string_col' column (BYTE_ARRAY, nullable)
+        guard let columnIndex = schema.columns.firstIndex(where: { $0.name == "string_col" }) else {
+            XCTFail("Could not find 'string_col' column")
+            return
+        }
+
+        print("\nReading nullable String column 'string_col':")
+
+        // Read the column
+        let columnReader = try rowGroup.stringColumn(at: columnIndex)
+        let values = try columnReader.readAll()
+
+        let nullCount = values.filter { $0 == nil }.count
+        let nonNullCount = values.filter { $0 != nil }.count
+        print("  Total: \(values.count), NULL: \(nullCount), Non-NULL: \(nonNullCount)")
+        print("  First values: \(values.prefix(10))")
+
+        XCTAssertEqual(values.count, Int(rowGroup.metadata.numRows))
+    }
+
+    func testReadAllNullableColumnTypes() throws {
+        let fileURL = fixturesURL.appendingPathComponent("alltypes_plain.parquet")
+        let reader = try ParquetFileReader(url: fileURL)
+        defer { try? reader.close() }
+
+        let rowGroup = try reader.rowGroup(at: 0)
+        let schema = reader.metadata.schema
+
+        print("\nReading all nullable columns:")
+        print(String(repeating: "=", count: 60))
+
+        // Test each supported column type
+        let testColumns = [
+            ("id", "Int32"),
+            ("int_col", "Int32"),
+            ("bigint_col", "Int64"),
+            ("float_col", "Float"),
+            ("double_col", "Double"),
+            ("string_col", "String")
+        ]
+
+        for (columnName, typeName) in testColumns {
+            guard let columnIndex = schema.columns.firstIndex(where: { $0.name == columnName }) else {
+                print("\n⚠️  Column '\(columnName)' not found - skipping")
+                continue
+            }
+
+            let column = schema.columns[columnIndex]
+            print("\n📊 Column: \(columnName) (\(typeName))")
+            print("   Max def level: \(column.maxDefinitionLevel), Max rep level: \(column.maxRepetitionLevel)")
+
+            do {
+                switch typeName {
+                case "Int32":
+                    let reader = try rowGroup.int32Column(at: columnIndex)
+                    let values = try reader.readAll()
+                    let nulls = values.filter { $0 == nil }.count
+                    print("   ✅ Read \(values.count) values (\(nulls) NULLs)")
+
+                case "Int64":
+                    let reader = try rowGroup.int64Column(at: columnIndex)
+                    let values = try reader.readAll()
+                    let nulls = values.filter { $0 == nil }.count
+                    print("   ✅ Read \(values.count) values (\(nulls) NULLs)")
+
+                case "Float":
+                    let reader = try rowGroup.floatColumn(at: columnIndex)
+                    let values = try reader.readAll()
+                    let nulls = values.filter { $0 == nil }.count
+                    print("   ✅ Read \(values.count) values (\(nulls) NULLs)")
+
+                case "Double":
+                    let reader = try rowGroup.doubleColumn(at: columnIndex)
+                    let values = try reader.readAll()
+                    let nulls = values.filter { $0 == nil }.count
+                    print("   ✅ Read \(values.count) values (\(nulls) NULLs)")
+
+                case "String":
+                    let reader = try rowGroup.stringColumn(at: columnIndex)
+                    let values = try reader.readAll()
+                    let nulls = values.filter { $0 == nil }.count
+                    print("   ✅ Read \(values.count) values (\(nulls) NULLs)")
+
+                default:
+                    print("   ⚠️  Type \(typeName) not tested")
+                }
+            } catch {
+                XCTFail("Failed to read column '\(columnName)': \(error)")
+                print("   ❌ Error: \(error)")
+            }
+        }
+
+        print("\n" + String(repeating: "=", count: 60))
+        print("✅ Nullable column testing complete!")
+    }
 }
