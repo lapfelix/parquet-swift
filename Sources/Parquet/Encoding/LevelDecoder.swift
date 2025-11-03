@@ -23,6 +23,15 @@ import Foundation
 /// - High bit (bit 7) = 1 means more bytes follow
 /// - Values are little-endian
 ///
+/// # Return Type: UInt16
+///
+/// Returns `[UInt16]` to support schemas with up to 65,535 nesting levels. This is more than sufficient
+/// for any realistic Parquet schema. The Parquet spec technically allows up to 32-bit level values,
+/// but schemas with > 256 levels are already extremely rare in practice.
+///
+/// **Future extensibility**: If ever needed, this can be changed to `UInt32` without breaking the decoding
+/// logic - only the masking values (`0xFFFF` → `0xFFFFFFFF`) and return type need to be updated.
+///
 /// # Reference
 ///
 /// Based on Apache Arrow/Parquet RLE encoding:
@@ -39,9 +48,9 @@ public final class LevelDecoder {
     ///   - data: Complete level stream (4-byte length + runs)
     ///   - numValues: Expected number of level values
     ///   - maxLevel: Maximum level value (determines bit-width)
-    /// - Returns: Array of level values (0 to maxLevel)
+    /// - Returns: Array of level values (0 to maxLevel), using UInt16 to support schemas with up to 65535 nesting levels
     /// - Throws: `LevelError` if decoding fails
-    public func decodeLevels(from data: Data, numValues: Int, maxLevel: Int) throws -> [UInt8] {
+    public func decodeLevels(from data: Data, numValues: Int, maxLevel: Int) throws -> [UInt16] {
         // 1. Extract 4-byte length prefix (little-endian)
         guard data.count >= 4 else {
             throw LevelError.missingLengthPrefix
@@ -73,8 +82,8 @@ public final class LevelDecoder {
     // MARK: - Private Helpers
 
     /// Decode RLE/bit-packed runs
-    private func decodeRuns(data: Data, numValues: Int, bitWidth: Int) throws -> [UInt8] {
-        var levels: [UInt8] = []
+    private func decodeRuns(data: Data, numValues: Int, bitWidth: Int) throws -> [UInt16] {
+        var levels: [UInt16] = []
         levels.reserveCapacity(numValues)
 
         var offset = 0
@@ -114,13 +123,18 @@ public final class LevelDecoder {
                     throw LevelError.truncatedRuns
                 }
 
-                // Read repeated value
-                var value: UInt8 = 0
+                // Read repeated value (little-endian, up to 4 bytes for bitWidth <= 32)
+                var value: UInt32 = 0
                 if bitWidth > 0 {
-                    value = data[offset]
+                    for i in 0..<valueBytes {
+                        value |= UInt32(data[offset + i]) << (i * 8)
+                    }
                 }
 
-                levels.append(contentsOf: Array(repeating: value, count: count))
+                // Store as UInt16 (supports up to 65535 nesting levels)
+                // If a schema somehow has > 65535 levels, we truncate (but that's unrealistic)
+                let levelValue = UInt16(value & 0xFFFF)
+                levels.append(contentsOf: Array(repeating: levelValue, count: count))
                 offset += valueBytes
             }
         }
@@ -157,12 +171,12 @@ public final class LevelDecoder {
     }
 
     /// Unpack bit-packed values
-    private func unpackBits(data: Data, numValues: Int, bitWidth: Int) throws -> [UInt8] {
+    private func unpackBits(data: Data, numValues: Int, bitWidth: Int) throws -> [UInt16] {
         guard bitWidth > 0 else {
             return Array(repeating: 0, count: numValues)
         }
 
-        var values: [UInt8] = []
+        var values: [UInt16] = []
         values.reserveCapacity(numValues)
 
         var bitOffset = 0
@@ -175,16 +189,24 @@ public final class LevelDecoder {
                 throw LevelError.truncatedRuns
             }
 
-            // Read value spanning up to 2 bytes
-            var value: UInt16 = 0
-            value |= UInt16(data[byteOffset])
-            if byteOffset + 1 < data.count {
-                value |= UInt16(data[byteOffset + 1]) << 8
+            // Read value spanning up to 5 bytes (worst case: bitWidth=32, bitInByte=7)
+            // Calculate number of bytes needed to cover bitWidth bits starting at bitInByte
+            let bitsNeeded = bitWidth + bitInByte
+            let bytesNeeded = (bitsNeeded + 7) / 8
+
+            // Read up to 8 bytes into UInt64 (more than enough for bitWidth <= 32)
+            var value: UInt64 = 0
+            for i in 0..<min(bytesNeeded, 8) {
+                if byteOffset + i < data.count {
+                    value |= UInt64(data[byteOffset + i]) << (i * 8)
+                }
             }
 
             // Extract bitWidth bits starting at bitInByte
             value = (value >> bitInByte) & ((1 << bitWidth) - 1)
-            values.append(UInt8(value))
+
+            // Store as UInt16 (supports up to 65535 nesting levels)
+            values.append(UInt16(value & 0xFFFF))
 
             bitOffset += bitWidth
         }

@@ -115,13 +115,23 @@ See `generate_plain_fixture.py` for reference (PyArrow version that doesn't work
 
 ## Column Features
 
-### Nullable Columns (NOT IMPLEMENTED)
+### Nullable Columns (IMPLEMENTED ✅)
 
-**Status**: ❌ Not implemented in Phase 1
+**Status**: ✅ Implemented in Phase 3!
 
-**Missing**: Definition level / repetition level support
+**Supported**:
+- Definition level decoding (RLE/bit-packed hybrid encoding)
+- Nullable columns for all primitive types (Int32, Int64, Float, Double, String)
+- Both PLAIN and dictionary encoding with nullable columns
+- Correct null value representation in returned arrays
 
-**Impact**: Can only read required (non-nullable) columns. Most real Parquet schemas have nullable columns.
+**API Changes**:
+- Column readers now return optional arrays: `[Int32?]`, `[Int64?]`, `[Float?]`, `[Double?]`, `[String?]`
+- `readOne()` returns double optional (outer for end-of-stream, inner for NULL value)
+- Required columns return all non-nil values
+- Nullable columns return nil for NULL values
+
+**Impact**: Most real Parquet files with nullable columns are now readable!
 
 ### Nested Types (NOT IMPLEMENTED)
 
@@ -136,48 +146,51 @@ See `generate_plain_fixture.py` for reference (PyArrow version that doesn't work
 
 ## Summary
 
-Phase 2.2 implementation supports:
+Phase 3 implementation supports:
 - ✅ parquet-mr generated files
 - ✅ PLAIN encoding
 - ✅ **Dictionary encoding (RLE_DICTIONARY, PLAIN_DICTIONARY)** ✨
 - ✅ UNCOMPRESSED, GZIP, and **Snappy** compression
-- ✅ **Required (non-nullable)** primitive columns
-- ✅ **All primitive types: Int32, Int64, Float, Double, String** ✨ NEW!
+- ✅ **All primitive types: Int32, Int64, Float, Double, String** ✨
+- ✅ **Required (non-nullable) columns** ✨
+- ✅ **Nullable columns (definition level support)** ✨ NEW in Phase 3!
 
 **Major Improvements**:
 - ✅ Snappy compression support (~80% of production files)
-- ✅ **Dictionary encoding for ALL primitive types** (~90% of string/enum columns!)
-- ✅ **Complete Phase 2 primitive type support**
+- ✅ Dictionary encoding for ALL primitive types (~90% of string/enum columns!)
+- ✅ **Nullable column support** - can read NULL values in optional columns! (~90% of schemas!)
 
-### Dictionary Encoding - Phase 2.2 Scope
+### Dictionary Encoding - Complete Status
 
 **What works:**
-- ✅ **All primitive types**: Int32, Int64, Float, Double, String ✨ NEW!
-- ✅ Required columns with dictionary encoding
+- ✅ **All primitive types**: Int32, Int64, Float, Double, String
+- ✅ **Required columns** with dictionary encoding
+- ✅ **Nullable columns** with dictionary encoding ✨ NEW in Phase 3!
 - ✅ Both RLE_DICTIONARY and PLAIN_DICTIONARY encodings
 - ✅ Full overflow protection in RLE decoder
 - ✅ Strict byte-exact validation
+- ✅ Definition level decoding for nullable columns
 
 **What doesn't work yet:**
-- ❌ **Nullable columns** (maxDefinitionLevel > 0) - Phase 3
-- ❌ **Repeated columns** (maxRepetitionLevel > 0) - Phase 3
+- ❌ **Repeated columns** (maxRepetitionLevel > 0) - Future Phase
 
-**Why the limitation?**
+**Phase 3 Achievement:**
 
-Nullable and repeated columns encode definition/repetition levels before the data in each page.
-Phase 2.1 skips this level decoding step, so it only works for required columns where no
-level streams are present.
+Nullable columns now fully supported! The implementation decodes definition levels from each page
+to determine which values are NULL. Both PLAIN and dictionary encoding work correctly with
+nullable columns.
 
 Still **does not work** with:
-- Nullable columns (definition levels) - **Phase 3**
-- Repeated columns (repetition levels) - **Phase 3**
+- Repeated columns (repetition levels) - **Future Phase**
 - PyArrow tools (Python ecosystem) - metadata parsing incompatibility
 - Nested types (lists, maps, structs) - Phase 4+
 
+Completed milestones:
+1. ✅ **Dictionary encoding for required columns** (Phase 2.1)
+2. ✅ **Extend dictionary encoding to all types** (Phase 2.2)
+3. ✅ **Definition levels** (nullable columns) (Phase 3) ✨ DONE!
+
 Remaining priorities:
-1. ✅ **Dictionary encoding for required columns** (DONE - Phase 2.1)
-2. ✅ **Extend dictionary encoding to all types** (DONE - Phase 2.2)
-3. **Definition levels** (nullable columns) - Phase 3
-4. **Repetition levels** (repeated columns) - Phase 3
+4. **Repetition levels** (repeated columns) - Future Phase
 5. **PyArrow compatibility** (unblocks Python ecosystem) - TBD
 6. **Nested types** (lists, maps, structs) - Phase 4+

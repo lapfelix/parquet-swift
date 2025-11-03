@@ -8,24 +8,28 @@ A native Swift implementation of the Apache Parquet columnar storage format.
 
 ## Status
 
-🚧 **In Active Development** - Phase 2 (Full Reader)
+🚧 **In Active Development** - Phase 3 (Advanced Reader Features)
 
-Current milestone: **M2.0 - Snappy Compression** ✅
-Last completed: M1.10 - File Reader API ✅
+Current milestone: **Phase 3 - Nullable Columns** ✅
+Last completed: M2.2 - Dictionary Encoding (All Types) ✅
 
 **Phase 1 Complete!** ✅ All core reading components implemented.
-**Phase 2 Started**: Pure Swift Snappy compression support added. See [implementation roadmap](docs/implementation-roadmap.md) for details.
+**Phase 2 Complete!** ✅ Snappy compression + Dictionary encoding for all primitive types.
+**Phase 3 Progress**: Nullable column support with definition level decoding added! See [implementation roadmap](docs/implementation-roadmap.md) for details.
 
 ### Known Limitations
 
-Phase 1/2 supports:
+Current implementation supports:
 - ✅ parquet-mr generated files (Spark, Hive, parquet-mr tools)
-- ✅ PLAIN encoding only
+- ✅ PLAIN encoding
+- ✅ Dictionary encoding (RLE_DICTIONARY, PLAIN_DICTIONARY)
 - ✅ UNCOMPRESSED, GZIP, and Snappy compression
 - ✅ Required (non-nullable) primitive columns
+- ✅ **Nullable columns (definition level support)** ✨ NEW!
+- ✅ All primitive types: Int32, Int64, Float, Double, String
 - ❌ PyArrow-generated files (metadata incompatibility)
-- ❌ Dictionary encoding (most common for strings)
-- ❌ Nullable columns (definition levels)
+- ❌ Repeated columns (repetition levels)
+- ❌ Nested types (lists, maps, structs)
 
 See [docs/limitations.md](docs/limitations.md) for complete details and workarounds.
 
@@ -52,24 +56,27 @@ This library is under active development and the API may change between mileston
 - ✅ Column readers (Int32, Int64, Float, Double, String)
 - ✅ File Reader API (instance-based, type-safe)
 
-### Phase 2 (In Progress 🚧) - Full Reader
+### Phase 2 (Complete ✅) - Full Reader
 - ✅ **M2.0**: Snappy compression (most common in production)
-- 🚧 Dictionary encoding (PLAIN_DICTIONARY + RLE_DICTIONARY)
-- 🚧 Definition levels (nullable columns)
+- ✅ **M2.1**: Dictionary encoding (RLE_DICTIONARY) for Int32
+- ✅ **M2.2**: Dictionary encoding for all primitive types (Int64, Float, Double, String)
+
+### Phase 3 (In Progress 🚧) - Advanced Reader Features
+- ✅ **Definition levels** (nullable columns) - ALL primitive types!
+- 🚧 Repetition levels (repeated columns)
 - 🚧 Nested types (lists, maps, structs)
 
 **Still Deferred:**
 - PyArrow compatibility
 - Delta encodings
 - RLE encoding for booleans
-- Complete repetition level support
 
-### Phase 3 (8 weeks) - Writer
+### Phase 4 (Future) - Writer
 - File writing support
 - All encodings
 - Statistics generation
 
-### Phase 4 (6 weeks) - Advanced Features
+### Phase 5 (Future) - Advanced Features
 - Bloom filters
 - Page index
 - Async I/O

@@ -6,17 +6,16 @@ import Foundation
 
 /// Reads Int32 values from a Parquet column chunk.
 ///
-/// Supports both PLAIN and dictionary encoding.
+/// Supports both PLAIN and dictionary encoding, with nullable columns.
 ///
-/// # Phase 2.1 Limitations
+/// # Phase 3 Features
 ///
-/// **Dictionary encoding currently only works for required (non-nullable) columns.**
+/// - ✅ Required columns (non-nullable)
+/// - ✅ Nullable columns (definition levels)
+/// - ✅ PLAIN and dictionary encoding
 ///
-/// - ✅ Supported: Required columns with dictionary encoding
-/// - ❌ Not yet supported: Optional/repeated columns (definition/repetition levels)
-///
-/// Nullable columns store definition levels before the data in each page.
-/// Phase 3 will add level decoding to support nullable and repeated columns.
+/// Returns `[Int32?]` where `nil` represents NULL values in nullable columns.
+/// For required columns, all values will be non-nil.
 ///
 /// # Usage
 ///
@@ -24,10 +23,11 @@ import Foundation
 /// let reader = try Int32ColumnReader(
 ///     file: file,
 ///     columnMetadata: metadata,
-///     codec: codec
+///     codec: codec,
+///     column: column
 /// )
 ///
-/// let values = try reader.readBatch(count: 1000)
+/// let values = try reader.readBatch(count: 1000)  // Returns [Int32?]
 /// ```
 public final class Int32ColumnReader {
     /// Page reader for this column
@@ -42,6 +42,9 @@ public final class Int32ColumnReader {
     /// Maximum repetition level for this column (from schema)
     private let maxRepetitionLevel: Int
 
+    /// Level decoder for definition/repetition levels
+    private let levelDecoder: LevelDecoder
+
     /// Current page being read
     private var currentPage: DataPage?
 
@@ -51,8 +54,14 @@ public final class Int32ColumnReader {
     /// Decoded indices for current page (dictionary encoding)
     private var currentIndices: [UInt32]?
 
-    /// Number of values read from current page
+    /// Definition levels for current page (nullable columns only)
+    private var currentDefinitionLevels: [UInt16]?
+
+    /// Number of values read from current page (includes nulls)
     private var valuesReadFromPage: Int = 0
+
+    /// Number of non-null values read from current page (offset into data stream)
+    private var nonNullValuesRead: Int = 0
 
     /// Initialize an Int32 column reader
     ///
@@ -74,6 +83,7 @@ public final class Int32ColumnReader {
         )
         self.maxDefinitionLevel = column.maxDefinitionLevel
         self.maxRepetitionLevel = column.maxRepetitionLevel
+        self.levelDecoder = LevelDecoder()
 
         // Read dictionary page if present
         if let dictPage = try pageReader.readDictionaryPage() {
@@ -88,10 +98,10 @@ public final class Int32ColumnReader {
     /// Read a batch of values
     ///
     /// - Parameter count: Maximum number of values to read
-    /// - Returns: Array of values (may be fewer than requested if end of column)
+    /// - Returns: Array of optional values (nil for NULL values in nullable columns)
     /// - Throws: `ColumnReaderError` if reading fails
-    public func readBatch(count: Int) throws -> [Int32] {
-        var values: [Int32] = []
+    public func readBatch(count: Int) throws -> [Int32?] {
+        var values: [Int32?] = []
         values.reserveCapacity(count)
 
         var remaining = count
@@ -106,23 +116,35 @@ public final class Int32ColumnReader {
             // Read from current page
             let toRead = min(remaining, remainingInPage())
 
-            if let decoder = currentDecoder {
-                // PLAIN encoding
-                let pageValues = try decoder.decode(count: toRead)
-                values.append(contentsOf: pageValues)
-            } else if let indices = currentIndices, let dict = dictionary {
-                // Dictionary encoding
-                let startIndex = valuesReadFromPage
-                let endIndex = startIndex + toRead
-                for i in startIndex..<endIndex {
-                    let value = try dict.value(at: indices[i])
-                    values.append(value)
+            for _ in 0..<toRead {
+                // Check definition level to determine if value is null
+                if let defLevels = currentDefinitionLevels {
+                    let defLevel = defLevels[valuesReadFromPage]
+                    if defLevel < maxDefinitionLevel {
+                        // Value is null
+                        values.append(nil)
+                        valuesReadFromPage += 1
+                        continue
+                    }
                 }
-            } else {
-                throw ColumnReaderError.internalError("No decoder or indices available")
+
+                // Value is present - read from data stream
+                let value: Int32
+                if let decoder = currentDecoder {
+                    // PLAIN encoding
+                    value = try decoder.decodeOne()
+                } else if let indices = currentIndices, let dict = dictionary {
+                    // Dictionary encoding
+                    value = try dict.value(at: indices[nonNullValuesRead])
+                } else {
+                    throw ColumnReaderError.internalError("No decoder or indices available")
+                }
+
+                values.append(value)
+                valuesReadFromPage += 1
+                nonNullValuesRead += 1
             }
 
-            valuesReadFromPage += toRead
             remaining -= toRead
 
             // Check if page is exhausted
@@ -130,7 +152,9 @@ public final class Int32ColumnReader {
                 currentPage = nil
                 currentDecoder = nil
                 currentIndices = nil
+                currentDefinitionLevels = nil
                 valuesReadFromPage = 0
+                nonNullValuesRead = 0
             }
         }
 
@@ -139,43 +163,68 @@ public final class Int32ColumnReader {
 
     /// Read a single value
     ///
-    /// - Returns: The value, or nil if no more values
+    /// - Returns: Double optional: outer nil = no more values, inner nil = NULL value
     /// - Throws: `ColumnReaderError` if reading fails
-    public func readOne() throws -> Int32? {
+    public func readOne() throws -> Int32?? {
         guard try loadPageIfNeeded() else {
-            return nil
+            return nil  // No more values
         }
 
+        // Check definition level to determine if value is null
+        if let defLevels = currentDefinitionLevels {
+            let defLevel = defLevels[valuesReadFromPage]
+            if defLevel < maxDefinitionLevel {
+                // Value is null
+                valuesReadFromPage += 1
+
+                // Check if page is exhausted
+                if valuesReadFromPage >= currentPage!.numValues {
+                    currentPage = nil
+                    currentDecoder = nil
+                    currentIndices = nil
+                    currentDefinitionLevels = nil
+                    valuesReadFromPage = 0
+                    nonNullValuesRead = 0
+                }
+
+                return .some(nil)  // NULL value
+            }
+        }
+
+        // Value is present - read from data stream
         let value: Int32
         if let decoder = currentDecoder {
             // PLAIN encoding
             value = try decoder.decodeOne()
         } else if let indices = currentIndices, let dict = dictionary {
             // Dictionary encoding
-            value = try dict.value(at: indices[valuesReadFromPage])
+            value = try dict.value(at: indices[nonNullValuesRead])
         } else {
             throw ColumnReaderError.internalError("No decoder or indices available")
         }
 
         valuesReadFromPage += 1
+        nonNullValuesRead += 1
 
         // Check if page is exhausted
         if valuesReadFromPage >= currentPage!.numValues {
             currentPage = nil
             currentDecoder = nil
             currentIndices = nil
+            currentDefinitionLevels = nil
             valuesReadFromPage = 0
+            nonNullValuesRead = 0
         }
 
-        return value
+        return .some(value)  // Present value
     }
 
     /// Read all remaining values
     ///
-    /// - Returns: Array of all remaining values
+    /// - Returns: Array of all remaining optional values (nil for NULLs)
     /// - Throws: `ColumnReaderError` if reading fails
-    public func readAll() throws -> [Int32] {
-        var values: [Int32] = []
+    public func readAll() throws -> [Int32?] {
+        var values: [Int32?] = []
 
         while let value = try readOne() {
             values.append(value)
@@ -201,15 +250,67 @@ public final class Int32ColumnReader {
             return false // No more pages
         }
 
+        // PHASE 3: Support for nullable columns
+        // Check if we need to decode definition levels
+        var dataOffset = 0
+        var definitionLevels: [UInt16]?
+
+        if maxDefinitionLevel > 0 {
+            // Decode definition levels from the beginning of page.data
+            // Format: <4-byte length> <RLE-encoded levels>
+            guard page.data.count >= 4 else {
+                throw ColumnReaderError.internalError("Page data too short for definition levels")
+            }
+
+            // Read 4-byte length prefix (little-endian)
+            let levelDataLength = Int(UInt32(page.data[0])
+                | (UInt32(page.data[1]) << 8)
+                | (UInt32(page.data[2]) << 16)
+                | (UInt32(page.data[3]) << 24))
+
+            let levelStreamLength = 4 + levelDataLength
+            guard page.data.count >= levelStreamLength else {
+                throw ColumnReaderError.internalError(
+                    "Page data too short: expected \(levelStreamLength) bytes for levels, got \(page.data.count)"
+                )
+            }
+
+            // Extract level stream
+            let levelData = page.data.subdata(in: 0..<levelStreamLength)
+
+            // Decode definition levels
+            definitionLevels = try levelDecoder.decodeLevels(
+                from: levelData,
+                numValues: page.numValues,
+                maxLevel: maxDefinitionLevel
+            )
+
+            // Data starts after level stream
+            dataOffset = levelStreamLength
+        }
+
+        // Extract data portion (after level streams)
+        let dataSlice = page.data.subdata(in: dataOffset..<page.data.count)
+
+        // Count non-null values (for sizing the data stream)
+        let numNonNullValues: Int
+        if let defLevels = definitionLevels {
+            numNonNullValues = defLevels.filter { $0 == maxDefinitionLevel }.count
+        } else {
+            numNonNullValues = page.numValues
+        }
+
         // Decode based on encoding type
         switch page.encoding {
         case .plain:
-            // PLAIN encoding: use PlainDecoder directly
-            let decoder = PlainDecoder<Int32>(data: page.data)
+            // PLAIN encoding: use PlainDecoder on data portion
+            let decoder = PlainDecoder<Int32>(data: dataSlice)
             currentPage = page
             currentDecoder = decoder
             currentIndices = nil
+            currentDefinitionLevels = definitionLevels
             valuesReadFromPage = 0
+            nonNullValuesRead = 0
 
         case .rleDictionary, .plainDictionary:
             // Dictionary encoding: decode indices with RLE decoder
@@ -219,38 +320,26 @@ public final class Int32ColumnReader {
                 )
             }
 
-            // PHASE 2.1 LIMITATION: Only required (non-nullable, non-repeated) columns supported
-            //
-            // Check schema-derived max levels (not page header encodings, which may be
-            // populated even for required columns). Only reject if levels are actually present.
-            if maxDefinitionLevel > 0 || maxRepetitionLevel > 0 {
-                var unsupportedFeatures: [String] = []
-                if maxDefinitionLevel > 0 {
-                    unsupportedFeatures.append("nullable columns (definition levels)")
-                }
-                if maxRepetitionLevel > 0 {
-                    unsupportedFeatures.append("repeated columns (repetition levels)")
-                }
-
+            // PHASE 3 LIMITATION: Repeated columns not yet supported
+            if maxRepetitionLevel > 0 {
                 throw ColumnReaderError.unsupportedEncoding(
                     """
-                    Dictionary encoding with \(unsupportedFeatures.joined(separator: " and ")) \
-                    not yet supported in Phase 2.1. \
-                    This column requires level stream decoding (Phase 3). \
-                    Currently only required (non-nullable, non-repeated) dictionary columns are supported.
+                    Repeated columns (repetition levels) not yet supported in Phase 3. \
+                    This feature will be added in a future phase.
                     """
                 )
             }
 
-            // Safe to decode: maxDefinitionLevel = 0 and maxRepetitionLevel = 0
-            // No level streams in page.data, it contains only dictionary indices
+            // Decode dictionary indices from data portion
             let rleDecoder = RLEDecoder()
-            let indices = try rleDecoder.decodeIndices(from: page.data, numValues: page.numValues)
+            let indices = try rleDecoder.decodeIndices(from: dataSlice, numValues: numNonNullValues)
 
             currentPage = page
             currentDecoder = nil
             currentIndices = indices
+            currentDefinitionLevels = definitionLevels
             valuesReadFromPage = 0
+            nonNullValuesRead = 0
 
         default:
             throw ColumnReaderError.unsupportedEncoding(

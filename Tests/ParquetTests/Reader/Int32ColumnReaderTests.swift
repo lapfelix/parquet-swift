@@ -202,7 +202,7 @@ final class Int32ColumnReaderTests: XCTestCase {
         )
 
         // Read in batches
-        var allValues: [Int32] = []
+        var allValues: [Int32?] = []
         let batchSize = 100
 
         while true {
@@ -215,6 +215,9 @@ final class Int32ColumnReaderTests: XCTestCase {
 
         print("\nRead \(allValues.count) values in batches of \(batchSize)")
         XCTAssertEqual(allValues.count, Int(columnMetadata.numValues))
+
+        // For required columns, all values should be non-nil
+        XCTAssertTrue(allValues.allSatisfy { $0 != nil }, "Required column should have no nil values")
     }
 
     func testReadOne() throws {
