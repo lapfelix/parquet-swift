@@ -19,14 +19,16 @@ let package = Package(
         ),
     ],
     dependencies: [
-        // Dependencies will be added as needed:
-        // - Compression libraries (Snappy) if not using system libraries
+        // Pure Swift Snappy implementation
+        .package(url: "https://github.com/codelynx/snappy-swift.git", from: "1.0.1"),
     ],
     targets: [
         // Main Parquet implementation
         .target(
             name: "Parquet",
-            dependencies: [],
+            dependencies: [
+                .product(name: "SnappySwift", package: "snappy-swift")
+            ],
             path: "Sources/Parquet"
         ),
 

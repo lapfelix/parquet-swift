@@ -233,11 +233,8 @@ final class IntegrationTests: XCTestCase {
                 continue
             }
 
-            // Skip if Snappy compressed (Phase 1 limitation)
-            if colMetadata.codec == .snappy {
-                print("    Skipped: Snappy compression not supported")
-                continue
-            }
+            // Snappy is now supported! (Phase 2)
+            // No need to skip Snappy-compressed columns
 
             // Try to access with correct type
             switch column.physicalType {
@@ -306,6 +303,42 @@ final class IntegrationTests: XCTestCase {
                 return
             }
         }
+    }
+
+    func testSnappyCompressedFile() throws {
+        let fileURL = fixturesURL.appendingPathComponent("datapage_v1-snappy-compressed-checksum.parquet")
+
+        // Open Snappy-compressed file
+        let reader = try ParquetFileReader(url: fileURL)
+        defer { try? reader.close() }
+
+        print("\nSnappy-compressed file:")
+        print("  Rows: \(reader.metadata.numRows)")
+        print("  Columns: \(reader.metadata.schema.columnCount)")
+        print("  Row groups: \(reader.metadata.numRowGroups)")
+
+        // Verify metadata
+        XCTAssertGreaterThan(reader.metadata.numRows, 0)
+        XCTAssertEqual(reader.metadata.numRows, 5120)
+        XCTAssertGreaterThan(reader.metadata.numRowGroups, 0)
+
+        // Access row group
+        let rowGroup = try reader.rowGroup(at: 0)
+        XCTAssertGreaterThan(rowGroup.metadata.numRows, 0)
+
+        // Check that columns use Snappy compression
+        var foundSnappy = false
+        for (index, column) in rowGroup.metadata.columns.enumerated() {
+            if let metadata = column.metadata {
+                print("  Column \(index) codec: \(metadata.codec)")
+                if metadata.codec == .snappy {
+                    foundSnappy = true
+                }
+            }
+        }
+
+        XCTAssertTrue(foundSnappy, "File should have at least one column with Snappy compression")
+        print("  ✓ Successfully opened and read metadata from Snappy-compressed file!")
     }
 
     func testResourceCleanup() throws {

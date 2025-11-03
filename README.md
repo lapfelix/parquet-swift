@@ -8,24 +8,24 @@ A native Swift implementation of the Apache Parquet columnar storage format.
 
 ## Status
 
-🚧 **In Active Development** - Phase 1 (Practical Reader)
+🚧 **In Active Development** - Phase 2 (Full Reader)
 
-Current milestone: **M1.10 - File Reader API** ✅
-Last completed: M1.9 - Column Reader ✅
+Current milestone: **M2.0 - Snappy Compression** ✅
+Last completed: M1.10 - File Reader API ✅
 
-**Phase 1 Complete!** All core reading components implemented. See [implementation roadmap](docs/implementation-roadmap.md) for next steps.
+**Phase 1 Complete!** ✅ All core reading components implemented.
+**Phase 2 Started**: Pure Swift Snappy compression support added. See [implementation roadmap](docs/implementation-roadmap.md) for details.
 
 ### Known Limitations
 
-Phase 1 supports a **minimal subset** of Parquet:
+Phase 1/2 supports:
 - ✅ parquet-mr generated files (Spark, Hive, parquet-mr tools)
 - ✅ PLAIN encoding only
-- ✅ UNCOMPRESSED or GZIP compression
+- ✅ UNCOMPRESSED, GZIP, and Snappy compression
 - ✅ Required (non-nullable) primitive columns
 - ❌ PyArrow-generated files (metadata incompatibility)
 - ❌ Dictionary encoding (most common for strings)
-- ❌ Snappy compression (most common in production)
-- ❌ Nullable columns
+- ❌ Nullable columns (definition levels)
 
 See [docs/limitations.md](docs/limitations.md) for complete details and workarounds.
 
@@ -52,16 +52,17 @@ This library is under active development and the API may change between mileston
 - ✅ Column readers (Int32, Int64, Float, Double, String)
 - ✅ File Reader API (instance-based, type-safe)
 
-**Deferred to Phase 2:**
-- Dictionary encoding
-- Snappy compression
-- Optional columns (null handling)
-- Nested types
+### Phase 2 (In Progress 🚧) - Full Reader
+- ✅ **M2.0**: Snappy compression (most common in production)
+- 🚧 Dictionary encoding (PLAIN_DICTIONARY + RLE_DICTIONARY)
+- 🚧 Definition levels (nullable columns)
+- 🚧 Nested types (lists, maps, structs)
 
-### Phase 2 (6-8 weeks) - Full Reader
-- Nested types (lists, maps, structs)
+**Still Deferred:**
+- PyArrow compatibility
 - Delta encodings
-- Complete RLE implementation
+- RLE encoding for booleans
+- Complete repetition level support
 
 ### Phase 3 (8 weeks) - Writer
 - File writing support
@@ -132,7 +133,8 @@ print("First 10 names: \(names.prefix(10))")
 ### Dependencies
 
 - **GZIP**: Built-in via Foundation's `Compression` framework
-- **Snappy**: Optional, via system library or Swift package
+- **Snappy**: Pure Swift implementation via [snappy-swift](https://github.com/codelynx/snappy-swift)
+- **No system dependencies required!**
 
 ## Documentation
 
@@ -235,6 +237,8 @@ Licensed under the Apache License, Version 2.0. See [LICENSE](LICENSE) for detai
 
 ---
 
-**Status**: Alpha - Phase 1 Complete ✅
-**Current Phase**: Phase 1 - Practical Reader ✅
-**Next Phase**: Phase 2 - Full Reader (Dictionary encoding, Snappy, nulls, nested types)
+**Status**: Alpha - Phase 2 In Progress
+**Current Milestone**: M2.0 - Snappy Compression ✅
+**Next Milestone**: M2.1 - Dictionary Encoding
+**Phase 1**: ✅ Complete (Practical Reader)
+**Phase 2**: 🚧 In Progress (Full Reader - Snappy ✅, Dictionary 🚧, Nulls 🚧, Nested types 🚧)

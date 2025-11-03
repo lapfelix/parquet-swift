@@ -94,12 +94,8 @@ public struct CodecFactory {
             return GzipCodec()
 
         case .snappy:
-            // Check if Snappy is available
-            #if canImport(CSnappy)
+            // Pure Swift Snappy implementation (always available)
             return SnappyCodec()
-            #else
-            throw CodecError.unavailable("Snappy codec not available (CSnappy library not linked)")
-            #endif
 
         case .lz4, .lz4Raw, .zstd, .brotli, .lzo:
             throw CodecError.unavailable("\(compression.rawValue) codec not yet implemented (Phase 2+)")

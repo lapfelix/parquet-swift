@@ -18,14 +18,10 @@ final class CodecTests: XCTestCase {
         XCTAssertEqual(codec.compressionType, .gzip)
     }
 
-    func testCodecFactorySnappy() {
-        // Snappy is not implemented in Phase 1
-        XCTAssertThrowsError(try CodecFactory.codec(for: .snappy)) { error in
-            guard case CodecError.unavailable = error else {
-                XCTFail("Expected unavailable error for Snappy")
-                return
-            }
-        }
+    func testCodecFactorySnappy() throws {
+        // Snappy is now available in Phase 2
+        let codec = try CodecFactory.codec(for: .snappy)
+        XCTAssertEqual(codec.compressionType, .snappy)
     }
 
     func testCodecFactoryUnsupportedCodecs() {
@@ -44,7 +40,7 @@ final class CodecTests: XCTestCase {
     func testCodecFactoryIsAvailable() {
         XCTAssertTrue(CodecFactory.isAvailable(.uncompressed))
         XCTAssertTrue(CodecFactory.isAvailable(.gzip))
-        XCTAssertFalse(CodecFactory.isAvailable(.snappy))
+        XCTAssertTrue(CodecFactory.isAvailable(.snappy)) // Now available!
         XCTAssertFalse(CodecFactory.isAvailable(.lz4))
     }
 
@@ -176,6 +172,114 @@ final class CodecTests: XCTestCase {
                 return
             }
         }
+    }
+
+    // MARK: - Snappy Codec Tests
+
+    func testSnappyRoundTrip() throws {
+        let codec = try CodecFactory.codec(for: .snappy)
+        let original = Data("Hello, World! This is a test string for Snappy compression.".utf8)
+
+        // Compress
+        let compressed = try codec.compress(original)
+
+        // Should be smaller (or at least different)
+        print("Snappy Original: \(original.count) bytes, Compressed: \(compressed.count) bytes")
+
+        // Decompress
+        let decompressed = try codec.decompress(compressed, uncompressedSize: original.count)
+
+        // Should match original
+        XCTAssertEqual(decompressed, original)
+    }
+
+    func testSnappyLargeData() throws {
+        let codec = try CodecFactory.codec(for: .snappy)
+
+        // Create 10KB of repeated data (compresses well)
+        let pattern = Data("ABCDEFGHIJ".utf8)
+        var original = Data()
+        for _ in 0..<1000 {
+            original.append(pattern)
+        }
+
+        // Compress
+        let compressed = try codec.compress(original)
+
+        // Should achieve compression
+        let ratio = Double(compressed.count) / Double(original.count)
+        print("Snappy compression ratio: \(ratio)")
+        XCTAssertLessThan(compressed.count, original.count, "Compressed should be smaller")
+
+        // Decompress
+        let decompressed = try codec.decompress(compressed, uncompressedSize: original.count)
+        XCTAssertEqual(decompressed, original)
+    }
+
+    func testSnappyEmptyData() throws {
+        let codec = try CodecFactory.codec(for: .snappy)
+        let empty = Data()
+
+        let compressed = try codec.compress(empty)
+        let decompressed = try codec.decompress(compressed, uncompressedSize: 0)
+
+        XCTAssertEqual(decompressed, empty)
+    }
+
+    func testSnappyBinaryData() throws {
+        let codec = try CodecFactory.codec(for: .snappy)
+
+        // Create binary data (0-255 repeated)
+        var original = Data()
+        for i in 0..<256 {
+            original.append(UInt8(i))
+        }
+        original.append(contentsOf: original) // 512 bytes
+
+        let compressed = try codec.compress(original)
+        let decompressed = try codec.decompress(compressed, uncompressedSize: original.count)
+
+        XCTAssertEqual(decompressed, original)
+    }
+
+    func testSnappyRepeatingPattern() throws {
+        let codec = try CodecFactory.codec(for: .snappy)
+
+        // Highly compressible data
+        let original = Data(repeating: 0x42, count: 1000)
+
+        let compressed = try codec.compress(original)
+
+        // Should compress very well
+        let ratio = Double(compressed.count) / Double(original.count)
+        print("Snappy repeating pattern compression ratio: \(ratio)")
+        XCTAssertLessThan(ratio, 0.5, "Repeating data should compress significantly")
+
+        let decompressed = try codec.decompress(compressed, uncompressedSize: original.count)
+        XCTAssertEqual(decompressed, original)
+    }
+
+    func testSnappyTextData() throws {
+        let codec = try CodecFactory.codec(for: .snappy)
+
+        // Realistic text data
+        let text = """
+        Lorem ipsum dolor sit amet, consectetur adipiscing elit.
+        Sed do eiusmod tempor incididunt ut labore et dolore magna aliqua.
+        Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris.
+        Lorem ipsum dolor sit amet, consectetur adipiscing elit.
+        Sed do eiusmod tempor incididunt ut labore et dolore magna aliqua.
+        """
+
+        let original = Data(text.utf8)
+        let compressed = try codec.compress(original)
+
+        let ratio = Double(compressed.count) / Double(original.count)
+        print("Snappy text data compression ratio: \(ratio)")
+        XCTAssertLessThan(ratio, 1.0, "Text should compress")
+
+        let decompressed = try codec.decompress(compressed, uncompressedSize: original.count)
+        XCTAssertEqual(decompressed, original)
     }
 
     // MARK: - Real-World Data Tests
