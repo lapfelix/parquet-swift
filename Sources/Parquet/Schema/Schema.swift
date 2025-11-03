@@ -186,6 +186,59 @@ public struct Column {
 
         return level
     }
+
+    /// Definition level at which the nearest repeated ancestor is "present but empty".
+    ///
+    /// Returns nil if the column is not repeated (`maxRepetitionLevel == 0`).
+    ///
+    /// This is used for array reconstruction to distinguish between:
+    /// - Null/empty ancestor lists (def < repeatedAncestorDefLevel) → skip value
+    /// - Empty current list (def == repeatedAncestorDefLevel - 1) → empty array
+    /// - Null element in non-empty list (def < maxDefinitionLevel) → nil element
+    /// - Present element (def >= maxDefinitionLevel) → actual value
+    ///
+    /// Example:
+    /// ```
+    /// repeated group items {
+    ///   optional int32 value;
+    /// }
+    /// ```
+    /// - maxDefinitionLevel = 2 (repeated +1, optional +1)
+    /// - repeatedAncestorDefLevel = 1 (the repeated group's def level)
+    ///
+    /// Matches Arrow's `definition_level_of_list` logic.
+    public var repeatedAncestorDefLevel: Int? {
+        guard maxRepetitionLevel > 0 else { return nil }
+
+        // Build the path from root → leaf
+        var nodes: [SchemaElement] = []
+        var current: SchemaElement? = element
+        while let node = current {
+            nodes.append(node)
+            current = node.parent
+        }
+        nodes.reverse()  // root first, leaf last
+        guard nodes.count >= 2 else { return nil }
+
+        var defLevel = 0
+
+        // Walk the path (skip root at index 0)
+        for node in nodes[1...] {
+            guard let repetition = node.repetitionType else { continue }
+
+            switch repetition {
+            case .repeated:
+                defLevel += 1  // list itself contributes 1 def level
+                return defLevel  // this list's def level is what we need
+            case .optional:
+                defLevel += 1
+            case .required:
+                break
+            }
+        }
+
+        return nil  // No repeated ancestor found
+    }
 }
 
 extension Schema: CustomStringConvertible {

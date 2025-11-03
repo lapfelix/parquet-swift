@@ -30,6 +30,9 @@ import Foundation
 /// let values = try reader.readBatch(count: 1000)  // Returns [Double?]
 /// ```
 public final class DoubleColumnReader {
+    /// Column schema (for level information)
+    private let column: Column
+
     /// Page reader for this column
     private let pageReader: PageReader
 
@@ -79,6 +82,7 @@ public final class DoubleColumnReader {
         codec: Codec,
         column: Column
     ) throws {
+        self.column = column
         self.pageReader = try PageReader(
             file: file,
             columnMetadata: columnMetadata,
@@ -102,8 +106,14 @@ public final class DoubleColumnReader {
     ///
     /// - Parameter count: Maximum number of values to read
     /// - Returns: Array of optional values (nil for NULL values in nullable columns)
-    /// - Throws: `ColumnReaderError` if reading fails
+    /// - Throws: `ColumnReaderError` if reading fails or column is repeated
     public func readBatch(count: Int) throws -> [Double?] {
+        guard maxRepetitionLevel == 0 else {
+            throw ColumnReaderError.unsupportedFeature(
+                "Column is repeated (maxRepetitionLevel > 0). Use readAllRepeated() instead."
+            )
+        }
+
         var values: [Double?] = []
         values.reserveCapacity(count)
 
@@ -168,8 +178,14 @@ public final class DoubleColumnReader {
     /// Read a single value
     ///
     /// - Returns: Double optional: outer nil = no more values, inner nil = NULL value
-    /// - Throws: `ColumnReaderError` if reading fails
+    /// - Throws: `ColumnReaderError` if reading fails or column is repeated
     public func readOne() throws -> Double?? {
+        guard maxRepetitionLevel == 0 else {
+            throw ColumnReaderError.unsupportedFeature(
+                "Column is repeated (maxRepetitionLevel > 0). Use readAllRepeated() instead."
+            )
+        }
+
         guard try loadPageIfNeeded() else {
             return nil  // No more values
         }
@@ -228,8 +244,14 @@ public final class DoubleColumnReader {
     /// Read all remaining values
     ///
     /// - Returns: Array of all remaining optional values (nil for NULLs)
-    /// - Throws: `ColumnReaderError` if reading fails
+    /// - Throws: `ColumnReaderError` if reading fails or column is repeated
     public func readAll() throws -> [Double?] {
+        guard maxRepetitionLevel == 0 else {
+            throw ColumnReaderError.unsupportedFeature(
+                "Column is repeated (maxRepetitionLevel > 0). Use readAllRepeated() instead."
+            )
+        }
+
         var values: [Double?] = []
 
         while let value = try readOne() {
@@ -237,6 +259,96 @@ public final class DoubleColumnReader {
         }
 
         return values
+    }
+
+    /// Read all remaining values for a repeated column (returns nested arrays)
+    ///
+    /// This method is for columns with `maxRepetitionLevel > 0` (repeated fields).
+    /// It reconstructs arrays from the flat value sequence using repetition levels.
+    ///
+    /// - Returns: Array of arrays where inner nil represents NULL elements
+    /// - Throws: `ColumnReaderError` if column is not repeated or reading fails
+    ///
+    /// # Example
+    ///
+    /// For schema: `repeated double numbers;`
+    /// Data: [[1.5, 2.5], [], [3.5]]
+    /// Returns: [[1.5, 2.5], [], [3.5]]
+    public func readAllRepeated() throws -> [[Double?]] {
+        guard maxRepetitionLevel > 0 else {
+            throw ColumnReaderError.unsupportedFeature(
+                "Column is not repeated (maxRepetitionLevel = 0). Use readAll() instead."
+            )
+        }
+
+        guard let repeatedAncestorDefLevel = column.repeatedAncestorDefLevel else {
+            throw ColumnReaderError.internalError(
+                "Cannot compute repeatedAncestorDefLevel for repeated column"
+            )
+        }
+
+        // Collect all values and levels
+        var allValues: [Double] = []  // Non-null values only
+        var allDefLevels: [UInt16] = []
+        var allRepLevels: [UInt16] = []
+
+        // Read through all pages
+        while try loadPageIfNeeded() {
+            guard let defLevels = currentDefinitionLevels,
+                  let repLevels = currentRepetitionLevels else {
+                throw ColumnReaderError.internalError(
+                    "Repeated column must have definition and repetition levels"
+                )
+            }
+
+            let numValuesInPage = currentPage!.numValues
+
+            // Collect levels for this page
+            for i in 0..<numValuesInPage {
+                let defLevel = defLevels[i]
+                let repLevel = repLevels[i]
+
+                allDefLevels.append(defLevel)
+                allRepLevels.append(repLevel)
+
+                // Collect value only if non-null
+                if defLevel >= maxDefinitionLevel {
+                    let value: Double
+                    if let decoder = currentDecoder {
+                        // PLAIN encoding
+                        value = try decoder.decodeOne()
+                    } else if let indices = currentIndices, let dict = dictionary {
+                        // Dictionary encoding
+                        value = try dict.value(at: indices[nonNullValuesRead])
+                    } else {
+                        throw ColumnReaderError.internalError("No decoder or indices available")
+                    }
+                    allValues.append(value)
+                    nonNullValuesRead += 1
+                }
+
+                valuesReadFromPage += 1
+            }
+
+            // Mark page as exhausted
+            currentPage = nil
+            currentDecoder = nil
+            currentIndices = nil
+            currentDefinitionLevels = nil
+            currentRepetitionLevels = nil
+            valuesReadFromPage = 0
+            nonNullValuesRead = 0
+        }
+
+        // Reconstruct arrays
+        return try ArrayReconstructor.reconstructArrays(
+            values: allValues,
+            definitionLevels: allDefLevels,
+            repetitionLevels: allRepLevels,
+            maxDefinitionLevel: maxDefinitionLevel,
+            maxRepetitionLevel: maxRepetitionLevel,
+            repeatedAncestorDefLevel: repeatedAncestorDefLevel
+        )
     }
 
     // MARK: - Private Helpers

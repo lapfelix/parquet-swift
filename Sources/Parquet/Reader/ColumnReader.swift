@@ -226,6 +226,9 @@ public enum ColumnReaderError: Error, Equatable {
     /// Missing dictionary
     case missingDictionary(String)
 
+    /// Unsupported feature for this column type
+    case unsupportedFeature(String)
+
     /// Internal error (shouldn't happen)
     case internalError(String)
 }
@@ -243,6 +246,8 @@ extension ColumnReaderError: CustomStringConvertible {
             return "Type mismatch: \(msg)"
         case .missingDictionary(let msg):
             return "Missing dictionary: \(msg)"
+        case .unsupportedFeature(let msg):
+            return "Unsupported feature: \(msg)"
         case .internalError(let msg):
             return "Internal error: \(msg)"
         }
