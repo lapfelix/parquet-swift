@@ -10,10 +10,24 @@ A native Swift implementation of the Apache Parquet columnar storage format.
 
 🚧 **In Active Development** - Phase 1 (Practical Reader)
 
-Current milestone: **M1.6 - Metadata Parsing** ✅
-Last completed: M1.5 - Basic I/O Layer ✅
+Current milestone: **M1.9 - Column Reader** ✅
+Last completed: M1.8 - Compression Support ✅
 
 See [implementation roadmap](docs/implementation-roadmap.md) for detailed development plan.
+
+### Known Limitations
+
+Phase 1 supports a **minimal subset** of Parquet:
+- ✅ parquet-mr generated files (Spark, Hive, parquet-mr tools)
+- ✅ PLAIN encoding only
+- ✅ UNCOMPRESSED or GZIP compression
+- ✅ Required (non-nullable) primitive columns
+- ❌ PyArrow-generated files (metadata incompatibility)
+- ❌ Dictionary encoding (most common for strings)
+- ❌ Snappy compression (most common in production)
+- ❌ Nullable columns
+
+See [docs/limitations.md](docs/limitations.md) for complete details and workarounds.
 
 ### ⚠️ Pre-1.0 API Changes
 

@@ -16,24 +16,28 @@ final class Int32ColumnReaderTests: XCTestCase {
 
     // MARK: - Basic Reading Tests
 
-    // TODO: Create PLAIN-only test fixture
-    // The existing test files (alltypes_plain.parquet) use dictionary encoding for Int32 columns,
-    // which is not supported in Phase 1 (M1.9b).
+    // BLOCKED: No suitable test fixture for Phase 1
     //
-    // Need to generate a simple Parquet file with:
-    // - At least one Int32 column
+    // Column reader tests require a Parquet file with:
     // - PLAIN encoding only (no dictionary)
-    // - Uncompressed or GZIP compression
-    // - A few rows of data (10-100 rows is sufficient)
+    // - UNCOMPRESSED or GZIP compression (SNAPPY not supported in Phase 1)
+    // - parquet-mr generated (PyArrow metadata incompatible - see docs/limitations.md)
     //
-    // This can be generated using:
-    // - pyarrow: pd.DataFrame({'id': range(10)}).to_parquet('plain_int32.parquet', compression='none', use_dictionary=False)
-    // - parquet-mr: Set WriterVersion to PARQUET_1_0 and disable dictionary encoding
+    // Existing fixtures:
+    // - alltypes_plain.parquet: Uses dictionary encoding ❌
+    // - datapage_v1-snappy: Uses SNAPPY compression ❌
+    // - plain_types.parquet: PyArrow-generated, metadata parse fails ❌
     //
-    // Once created, place in Tests/ParquetTests/Fixtures/ and remove the XCTSkip from these tests.
+    // TODO: Generate test fixture using parquet-mr tools with:
+    //   - WriterVersion.PARQUET_1_0
+    //   - Disable dictionary encoding
+    //   - Use UNCOMPRESSED or GZIP
+    //   - Simple Int32/Int64/Float/Double/String columns
+    //
+    // Once fixture exists, update these tests to remove XCTSkip.
 
     func testReadInt32Column() throws {
-        throw XCTSkip("Test files use dictionary encoding - need PLAIN-only test file (see TODO above)")
+        throw XCTSkip("Blocked: No PLAIN-only, parquet-mr generated test fixture (see TODO above)")
     }
 
     func _testReadInt32ColumnDisabled() throws {
@@ -137,7 +141,7 @@ final class Int32ColumnReaderTests: XCTestCase {
     }
 
     func testReadBatch() throws {
-        throw XCTSkip("Test files use dictionary encoding - need PLAIN-only test file (see TODO above)")
+        throw XCTSkip("Blocked: No PLAIN-only, parquet-mr generated test fixture (see TODO above)")
     }
 
     func _testReadBatchDisabled() throws {
@@ -207,7 +211,7 @@ final class Int32ColumnReaderTests: XCTestCase {
     }
 
     func testReadOne() throws {
-        throw XCTSkip("Test files use dictionary encoding - need PLAIN-only test file (see TODO above)")
+        throw XCTSkip("Blocked: No PLAIN-only, parquet-mr generated test fixture (see TODO above)")
     }
 
     func _testReadOneDisabled() throws {
