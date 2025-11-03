@@ -21,13 +21,13 @@ Last completed: M2.2 - Dictionary Encoding (All Types) ✅
 
 Current implementation supports:
 - ✅ parquet-mr generated files (Spark, Hive, parquet-mr tools)
+- ✅ **PyArrow-generated files** (parquet-cpp-arrow) ✨ NEW!
 - ✅ PLAIN encoding
 - ✅ Dictionary encoding (RLE_DICTIONARY, PLAIN_DICTIONARY)
 - ✅ UNCOMPRESSED, GZIP, and Snappy compression
 - ✅ Required (non-nullable) primitive columns
-- ✅ **Nullable columns (definition level support)** ✨ NEW!
+- ✅ **Nullable columns (definition level support)** ✨
 - ✅ All primitive types: Int32, Int64, Float, Double, String
-- ❌ PyArrow-generated files (metadata incompatibility)
 - ❌ Repeated columns (repetition levels)
 - ❌ Nested types (lists, maps, structs)
 
@@ -63,11 +63,11 @@ This library is under active development and the API may change between mileston
 
 ### Phase 3 (In Progress 🚧) - Advanced Reader Features
 - ✅ **Definition levels** (nullable columns) - ALL primitive types!
+- ✅ **PyArrow compatibility** - Fixed critical Thrift parsing bugs!
 - 🚧 Repetition levels (repeated columns)
 - 🚧 Nested types (lists, maps, structs)
 
 **Still Deferred:**
-- PyArrow compatibility
 - Delta encodings
 - RLE encoding for booleans
 
