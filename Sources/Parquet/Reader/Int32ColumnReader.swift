@@ -57,6 +57,9 @@ public final class Int32ColumnReader {
     /// Definition levels for current page (nullable columns only)
     private var currentDefinitionLevels: [UInt16]?
 
+    /// Repetition levels for current page (repeated columns only)
+    private var currentRepetitionLevels: [UInt16]?
+
     /// Number of values read from current page (includes nulls)
     private var valuesReadFromPage: Int = 0
 
@@ -153,6 +156,7 @@ public final class Int32ColumnReader {
                 currentDecoder = nil
                 currentIndices = nil
                 currentDefinitionLevels = nil
+                currentRepetitionLevels = nil
                 valuesReadFromPage = 0
                 nonNullValuesRead = 0
             }
@@ -183,6 +187,7 @@ public final class Int32ColumnReader {
                     currentDecoder = nil
                     currentIndices = nil
                     currentDefinitionLevels = nil
+                    currentRepetitionLevels = nil
                     valuesReadFromPage = 0
                     nonNullValuesRead = 0
                 }
@@ -212,6 +217,7 @@ public final class Int32ColumnReader {
             currentDecoder = nil
             currentIndices = nil
             currentDefinitionLevels = nil
+            currentRepetitionLevels = nil
             valuesReadFromPage = 0
             nonNullValuesRead = 0
         }
@@ -250,33 +256,71 @@ public final class Int32ColumnReader {
             return false // No more pages
         }
 
-        // PHASE 3: Support for nullable columns
-        // Check if we need to decode definition levels
+        // PHASE 3+: Support for nullable and repeated columns
+        // Decode level streams from page data
+        // Page format: [Repetition Levels] [Definition Levels] [Values]
         var dataOffset = 0
+        var repetitionLevels: [UInt16]?
         var definitionLevels: [UInt16]?
 
-        if maxDefinitionLevel > 0 {
-            // Decode definition levels from the beginning of page.data
+        // 1. Decode repetition levels (if present)
+        if maxRepetitionLevel > 0 {
+            // Repetition levels come FIRST in the page
             // Format: <4-byte length> <RLE-encoded levels>
             guard page.data.count >= 4 else {
-                throw ColumnReaderError.internalError("Page data too short for definition levels")
+                throw ColumnReaderError.internalError("Page data too short for repetition levels")
             }
 
             // Read 4-byte length prefix (little-endian)
-            let levelDataLength = Int(UInt32(page.data[0])
-                | (UInt32(page.data[1]) << 8)
-                | (UInt32(page.data[2]) << 16)
-                | (UInt32(page.data[3]) << 24))
+            let levelDataLength = Int(UInt32(page.data[dataOffset])
+                | (UInt32(page.data[dataOffset + 1]) << 8)
+                | (UInt32(page.data[dataOffset + 2]) << 16)
+                | (UInt32(page.data[dataOffset + 3]) << 24))
 
             let levelStreamLength = 4 + levelDataLength
-            guard page.data.count >= levelStreamLength else {
+            guard page.data.count >= dataOffset + levelStreamLength else {
                 throw ColumnReaderError.internalError(
-                    "Page data too short: expected \(levelStreamLength) bytes for levels, got \(page.data.count)"
+                    "Page data too short: expected \(levelStreamLength) bytes for repetition levels at offset \(dataOffset)"
                 )
             }
 
             // Extract level stream
-            let levelData = page.data.subdata(in: 0..<levelStreamLength)
+            let levelData = page.data.subdata(in: dataOffset..<(dataOffset + levelStreamLength))
+
+            // Decode repetition levels
+            repetitionLevels = try levelDecoder.decodeLevels(
+                from: levelData,
+                numValues: page.numValues,
+                maxLevel: maxRepetitionLevel
+            )
+
+            // Advance offset past repetition levels
+            dataOffset += levelStreamLength
+        }
+
+        // 2. Decode definition levels (if present)
+        if maxDefinitionLevel > 0 {
+            // Definition levels come AFTER repetition levels
+            // Format: <4-byte length> <RLE-encoded levels>
+            guard page.data.count >= dataOffset + 4 else {
+                throw ColumnReaderError.internalError("Page data too short for definition levels")
+            }
+
+            // Read 4-byte length prefix (little-endian)
+            let levelDataLength = Int(UInt32(page.data[dataOffset])
+                | (UInt32(page.data[dataOffset + 1]) << 8)
+                | (UInt32(page.data[dataOffset + 2]) << 16)
+                | (UInt32(page.data[dataOffset + 3]) << 24))
+
+            let levelStreamLength = 4 + levelDataLength
+            guard page.data.count >= dataOffset + levelStreamLength else {
+                throw ColumnReaderError.internalError(
+                    "Page data too short: expected \(levelStreamLength) bytes for definition levels at offset \(dataOffset)"
+                )
+            }
+
+            // Extract level stream
+            let levelData = page.data.subdata(in: dataOffset..<(dataOffset + levelStreamLength))
 
             // Decode definition levels
             definitionLevels = try levelDecoder.decodeLevels(
@@ -285,8 +329,8 @@ public final class Int32ColumnReader {
                 maxLevel: maxDefinitionLevel
             )
 
-            // Data starts after level stream
-            dataOffset = levelStreamLength
+            // Advance offset past definition levels
+            dataOffset += levelStreamLength
         }
 
         // Extract data portion (after level streams)
@@ -309,6 +353,7 @@ public final class Int32ColumnReader {
             currentDecoder = decoder
             currentIndices = nil
             currentDefinitionLevels = definitionLevels
+            currentRepetitionLevels = repetitionLevels
             valuesReadFromPage = 0
             nonNullValuesRead = 0
 
@@ -320,16 +365,6 @@ public final class Int32ColumnReader {
                 )
             }
 
-            // PHASE 3 LIMITATION: Repeated columns not yet supported
-            if maxRepetitionLevel > 0 {
-                throw ColumnReaderError.unsupportedEncoding(
-                    """
-                    Repeated columns (repetition levels) not yet supported in Phase 3. \
-                    This feature will be added in a future phase.
-                    """
-                )
-            }
-
             // Decode dictionary indices from data portion
             let rleDecoder = RLEDecoder()
             let indices = try rleDecoder.decodeIndices(from: dataSlice, numValues: numNonNullValues)
@@ -338,6 +373,7 @@ public final class Int32ColumnReader {
             currentDecoder = nil
             currentIndices = indices
             currentDefinitionLevels = definitionLevels
+            currentRepetitionLevels = repetitionLevels
             valuesReadFromPage = 0
             nonNullValuesRead = 0
 
