@@ -72,58 +72,59 @@ extension ThriftReader {
 
     func readLogicalType() throws -> ThriftLogicalType? {
         var lastFieldId: Int16 = 0
+        var result: ThriftLogicalType?
 
         while let field = try readFieldHeader(lastFieldId: &lastFieldId) {
             switch field.fieldId {
             case 1: // STRING
                 _ = try readEmptyStruct()
-                return .string
+                result = .string
             case 2: // MAP
                 _ = try readEmptyStruct()
-                return .map
+                result = .map
             case 3: // LIST
                 _ = try readEmptyStruct()
-                return .list
+                result = .list
             case 4: // ENUM
                 _ = try readEmptyStruct()
-                return .enum
+                result = .enum
             case 5: // DECIMAL
                 let decimal = try readDecimalType()
-                return .decimal(decimal)
+                result = .decimal(decimal)
             case 6: // DATE
                 _ = try readEmptyStruct()
-                return .date
+                result = .date
             case 7: // TIME
                 let time = try readTimeType()
-                return .time(time)
+                result = .time(time)
             case 8: // TIMESTAMP
                 let timestamp = try readTimestampType()
-                return .timestamp(timestamp)
+                result = .timestamp(timestamp)
             case 10: // INTEGER
                 let integer = try readIntType()
-                return .integer(integer)
+                result = .integer(integer)
             case 11: // UNKNOWN (NULL)
                 _ = try readEmptyStruct()
-                return .unknown
+                result = .unknown
             case 12: // JSON
                 _ = try readEmptyStruct()
-                return .json
+                result = .json
             case 13: // BSON
                 _ = try readEmptyStruct()
-                return .bson
+                result = .bson
             case 14: // UUID
                 _ = try readEmptyStruct()
-                return .uuid
+                result = .uuid
             case 15: // FLOAT16
                 _ = try readEmptyStruct()
-                return .float16
+                result = .float16
             default:
                 // Skip unknown logical types
                 try skipField(type: field.type)
             }
         }
 
-        return nil
+        return result
     }
 
     func readEmptyStruct() throws {
@@ -227,23 +228,24 @@ extension ThriftReader {
 
     func readTimeUnit() throws -> ThriftTimeUnit? {
         var lastFieldId: Int16 = 0
+        var result: ThriftTimeUnit?
 
         while let field = try readFieldHeader(lastFieldId: &lastFieldId) {
             switch field.fieldId {
             case 1: // MILLIS
                 _ = try readEmptyStruct()
-                return .millis
+                result = .millis
             case 2: // MICROS
                 _ = try readEmptyStruct()
-                return .micros
+                result = .micros
             case 3: // NANOS
                 _ = try readEmptyStruct()
-                return .nanos
+                result = .nanos
             default:
                 try skipField(type: field.type)
             }
         }
 
-        return nil
+        return result
     }
 }

@@ -120,7 +120,7 @@ public final class ThriftReader {
     func readVarint16() throws -> Int16 {
         let value = try readVarint()
         guard value >= Int64(Int16.min) && value <= Int64(Int16.max) else {
-            throw ThriftError.protocolError("Varint16 out of range")
+            throw ThriftError.protocolError("Varint16 out of range: \(value)")
         }
         return Int16(value)
     }
@@ -271,8 +271,8 @@ public final class ThriftReader {
     /// Skips a struct.
     func skipStruct() throws {
         var lastFieldId: Int16 = 0
-        while try readFieldHeader(lastFieldId: &lastFieldId) != nil {
-            // Field header returns nil on STOP
+        while let field = try readFieldHeader(lastFieldId: &lastFieldId) {
+            try skipField(type: field.type)
         }
     }
 

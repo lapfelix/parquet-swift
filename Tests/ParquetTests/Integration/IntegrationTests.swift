@@ -368,6 +368,42 @@ final class IntegrationTests: XCTestCase {
         }
     }
 
+    // MARK: - PyArrow Compatibility Tests
+
+    func testPyArrowGeneratedFile() throws {
+        let fileURL = fixturesURL.appendingPathComponent("pyarrow_test.parquet")
+
+        print("\nTesting PyArrow-generated file compatibility:")
+        print("  File: \(fileURL.lastPathComponent)")
+
+        // Verify file exists
+        XCTAssertTrue(FileManager.default.fileExists(atPath: fileURL.path),
+                      "PyArrow test fixture not found: \(fileURL.path)")
+
+        do {
+            // Try to read metadata
+            let metadata = try ParquetFileReader.readMetadata(from: fileURL)
+
+            print("  ✅ Metadata parsed successfully!")
+            print("     Version: \(metadata.version)")
+            print("     Rows: \(metadata.numRows)")
+            print("     Columns: \(metadata.schema.columnCount)")
+            print("     Row groups: \(metadata.numRowGroups)")
+            if let createdBy = metadata.createdBy {
+                print("     Created by: \(createdBy)")
+            }
+
+            // Verify we got all the data
+            XCTAssertEqual(metadata.numRows, 5, "Should have 5 rows")
+            XCTAssertEqual(metadata.numRowGroups, 1, "Should have 1 row group")
+            XCTAssertEqual(metadata.schema.columnCount, 3, "Should have 3 columns")
+
+        } catch {
+            print("  ❌ ERROR: \(error)")
+            XCTFail("Failed to read PyArrow file: \(error)")
+        }
+    }
+
     // MARK: - Phase 3: Nullable Column Tests
 
     func testReadDataFromWorkingFile() throws {
