@@ -46,7 +46,7 @@ public final class RowGroupReader {
     public let metadata: RowGroupMetadata
 
     /// The file schema.
-    private let schema: Schema
+    internal let schema: Schema
 
     /// Initialize a row group reader.
     ///

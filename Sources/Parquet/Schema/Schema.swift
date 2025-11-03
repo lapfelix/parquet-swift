@@ -312,6 +312,51 @@ public struct Column {
     }
 }
 
+// MARK: - Struct and Map Support
+
+extension Schema {
+    /// Finds a schema element by path (excluding root "schema")
+    ///
+    /// - Parameter path: Path components (e.g., ["user"], ["user", "address"])
+    /// - Returns: The schema element if found, nil otherwise
+    ///
+    /// # Example
+    ///
+    /// ```swift
+    /// let userElement = schema.element(at: ["user"])
+    /// let cityElement = schema.element(at: ["user", "address", "city"])
+    /// ```
+    public func element(at path: [String]) -> SchemaElement? {
+        return root.descendant(at: path)
+    }
+
+    /// Returns all field columns of a struct
+    ///
+    /// - Parameter path: Path to the struct (e.g., ["user"])
+    /// - Returns: Array of columns that are fields of this struct, or nil if not a struct
+    ///
+    /// # Example
+    ///
+    /// ```swift
+    /// // For struct: user { name: string, age: int32 }
+    /// let fields = schema.structFields(at: ["user"])
+    /// // Returns: [Column(path: ["user", "name"]), Column(path: ["user", "age"])]
+    /// ```
+    public func structFields(at path: [String]) -> [Column]? {
+        guard let element = element(at: path), element.isStruct else {
+            return nil
+        }
+
+        // Find all leaf columns that are descendants of this struct
+        let fullPath = ["schema"] + path
+        return columns.filter { column in
+            let columnPath = ["schema"] + column.path
+            // Check if this column is a direct descendant of the struct
+            return columnPath.starts(with: fullPath) && columnPath.count > fullPath.count
+        }
+    }
+}
+
 extension Schema: CustomStringConvertible {
     public var description: String {
         var result = "Parquet Schema:\n"

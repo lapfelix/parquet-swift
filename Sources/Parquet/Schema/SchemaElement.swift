@@ -110,6 +110,69 @@ public enum ElementType: Sendable {
     case primitive(physicalType: PhysicalType, logicalType: LogicalType?)
 }
 
+// MARK: - Struct and Map Detection
+
+extension SchemaElement {
+    /// Whether this element is a struct (group without LIST or MAP logical type)
+    public var isStruct: Bool {
+        guard isGroup else { return false }
+        if case .group(let logical) = elementType {
+            return logical != .list && logical != .map
+        }
+        return false
+    }
+
+    /// Whether this element is a list (group with LIST logical type)
+    public var isList: Bool {
+        guard isGroup else { return false }
+        if case .group(let logical) = elementType {
+            return logical == .list
+        }
+        return false
+    }
+
+    /// Whether this element is a map (group with MAP logical type)
+    public var isMap: Bool {
+        guard isGroup else { return false }
+        if case .group(let logical) = elementType {
+            return logical == .map
+        }
+        return false
+    }
+
+    /// Find a child element by name
+    ///
+    /// - Parameter name: The child's name
+    /// - Returns: The child element if found, nil otherwise
+    public func child(named name: String) -> SchemaElement? {
+        return children.first { $0.name == name }
+    }
+
+    /// Find a descendant element by path
+    ///
+    /// - Parameter path: Path components from this element
+    /// - Returns: The descendant element if found, nil otherwise
+    ///
+    /// # Example
+    ///
+    /// ```swift
+    /// let address = userElement.descendant(at: ["address"])
+    /// let city = userElement.descendant(at: ["address", "city"])
+    /// ```
+    public func descendant(at path: [String]) -> SchemaElement? {
+        guard !path.isEmpty else { return self }
+
+        var current = self
+        for component in path {
+            guard let child = current.child(named: component) else {
+                return nil
+            }
+            current = child
+        }
+        return current
+    }
+}
+
 extension SchemaElement: CustomStringConvertible {
     public var description: String {
         let indent = String(repeating: "  ", count: depth)

@@ -261,6 +261,61 @@ public final class DoubleColumnReader {
         return values
     }
 
+    // MARK: - Internal API for Struct Reading
+
+    /// Read all values and definition levels (internal API for struct reading)
+    internal func readAllWithLevels() throws -> (values: [Double?], definitionLevels: [UInt16]) {
+        var values: [Double?] = []
+        var defLevels: [UInt16] = []
+
+        // Read through all pages
+        while try loadPageIfNeeded() {
+            let numValuesInPage = currentPage!.numValues
+
+            // Process each value in the page
+            for _ in 0..<numValuesInPage {
+                // Get definition level for this value position
+                let defLevel: UInt16
+                if let currentDefLevels = currentDefinitionLevels {
+                    defLevel = currentDefLevels[valuesReadFromPage]
+                } else {
+                    defLevel = UInt16(maxDefinitionLevel)
+                }
+
+                defLevels.append(defLevel)
+
+                if defLevel < maxDefinitionLevel {
+                    values.append(nil)
+                    valuesReadFromPage += 1
+                } else {
+                    let value: Double
+                    if let decoder = currentDecoder {
+                        value = try decoder.decodeOne()
+                    } else if let indices = currentIndices, let dict = dictionary {
+                        value = try dict.value(at: indices[nonNullValuesRead])
+                    } else {
+                        throw ColumnReaderError.internalError("No decoder or indices available")
+                    }
+
+                    values.append(value)
+                    valuesReadFromPage += 1
+                    nonNullValuesRead += 1
+                }
+            }
+
+            // Page exhausted - reset for next page
+            currentPage = nil
+            currentDecoder = nil
+            currentIndices = nil
+            currentDefinitionLevels = nil
+            currentRepetitionLevels = nil
+            valuesReadFromPage = 0
+            nonNullValuesRead = 0
+        }
+
+        return (values, defLevels)
+    }
+
     /// Read all remaining values for a repeated column (returns nested arrays)
     ///
     /// This method is for columns with `maxRepetitionLevel > 0` (repeated fields).
