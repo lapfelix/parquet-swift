@@ -92,7 +92,8 @@ struct ArrayReconstructor {
                 currentList = []
 
                 // Check if this is an empty list (def < repeatedAncestorDefLevel)
-                if defLevel < repeatedAncestorDefLevel {
+                // Only applies when repeatedAncestorDefLevel > 0 (i.e., there are optional ancestors)
+                if repeatedAncestorDefLevel > 0 && defLevel < repeatedAncestorDefLevel {
                     // Empty list - append it immediately
                     result.append([])
                     needsAppend = false
