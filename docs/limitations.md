@@ -120,16 +120,24 @@ This document tracks known limitations and compatibility issues in the current i
 
 **Impact**: Most real Parquet files with nullable columns are now readable!
 
-### Nested Types (NOT IMPLEMENTED)
+### Nested Types (PARTIALLY IMPLEMENTED)
 
-**Status**: ❌ Not implemented in Phase 1
+**Status**: 🚧 Partially implemented
+
+**Supported**:
+- ✅ Single-level repeated columns (maxRepetitionLevel = 1)
+- ✅ **Multi-level nested lists** (maxRepetitionLevel > 1) ✨ NEW!
+  - ✅ Lists of lists (e.g., `[[[1, 2], [3]], [[4]]]`)
+  - ✅ Distinguishes NULL lists vs EMPTY lists
+  - ✅ Handles all edge cases (null inner/outer lists, empty inner/outer lists)
+  - ✅ `readAllNested()` API returns nested arrays
 
 **Missing Support**:
-- Nested structs
-- Lists/arrays
-- Maps
+- ❌ Nested structs
+- ❌ Maps
+- ❌ Lists of structs
 
-**Impact**: Can only read flat, primitive columns.
+**Impact**: Can read primitive columns, single-level arrays, and multi-level nested lists. Cannot read maps or structs yet.
 
 ## Summary
 
@@ -142,7 +150,8 @@ Phase 3 implementation supports:
 - ✅ **All primitive types: Int32, Int64, Float, Double, String** ✨
 - ✅ **Required (non-nullable) columns** ✨
 - ✅ **Nullable columns (definition level support)** ✨
-- ✅ **Repeated columns (single-level arrays/lists)** ✨ NEW!
+- ✅ **Repeated columns (single-level arrays/lists)** ✨
+- ✅ **Multi-level nested lists (lists of lists)** ✨ NEW!
 
 **Major Improvements**:
 - ✅ **PyArrow compatibility** - Python ecosystem files now readable! (pandas, PyArrow, Dask) 🎉
@@ -171,10 +180,11 @@ Phase 3 implementation supports:
   - ✅ All 5 column types: Int32, Int64, Float, Double, String
 
 **What doesn't work yet:**
-- 🚧 **Multi-level nested types** (maxRepetitionLevel > 1) - Not yet implemented
-  - ❌ Nested lists (lists of lists)
+- 🚧 **Complex nested types** - Partially implemented
+  - ✅ **Nested lists** (lists of lists) - FULLY SUPPORTED! ✨
   - ❌ Lists of structs
-  - ❌ Complex nested schemas
+  - ❌ Maps
+  - ❌ Nested structs
 
 **Phase 3 Achievement:**
 
@@ -183,7 +193,7 @@ to determine which values are NULL. Both PLAIN and dictionary encoding work corr
 nullable columns.
 
 Still **does not work** with:
-- ❌ Multi-level nested types (lists of lists, lists of structs, maps, nested structs) - Phase 4+
+- ❌ Complex nested types (lists of structs, maps, nested structs) - Phase 4+
 
 Completed milestones:
 1. ✅ **Dictionary encoding for required columns** (Phase 2.1)
@@ -195,6 +205,12 @@ Completed milestones:
    - ✅ Reconstruct arrays from flat value sequences
    - ✅ Handle empty lists and null elements
    - ✅ `readAllRepeated()` API for all primitive types
+6. ✅ **Multi-level nested lists** (Phase 3) ✨ DONE!
+   - ✅ `readAllNested()` API for maxRepetitionLevel > 1
+   - ✅ ArrayReconstructor with explicit ListState tracking
+   - ✅ Follows Apache Arrow's DefRepLevelsToListInfo pattern
+   - ✅ Handles NULL vs EMPTY vs POPULATED lists correctly
+   - ✅ Comprehensive test coverage for all edge cases
 
 Remaining priorities:
-6. **Multi-level nested types** (nested lists, lists of structs, maps) - Phase 4+
+7. **Complex nested types** (lists of structs, maps, nested structs) - Phase 4+

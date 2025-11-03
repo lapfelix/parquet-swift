@@ -192,19 +192,22 @@ public struct Column {
     /// Returns nil if the column is not repeated (`maxRepetitionLevel == 0`).
     ///
     /// This is used for array reconstruction to distinguish between:
-    /// - Null/empty ancestor lists (def < repeatedAncestorDefLevel) → skip value
-    /// - Empty current list (def == repeatedAncestorDefLevel - 1) → empty array
-    /// - Null element in non-empty list (def < maxDefinitionLevel) → nil element
-    /// - Present element (def >= maxDefinitionLevel) → actual value
+    /// - NULL list (def < repeatedAncestorDefLevel) → append nil to result
+    /// - EMPTY list (def == repeatedAncestorDefLevel) → append [] to result
+    /// - List with NULL element (repeatedAncestorDefLevel < def < maxDefinitionLevel) → append [nil]
+    /// - List with value (def == maxDefinitionLevel) → append [value]
     ///
     /// Example:
     /// ```
-    /// repeated group items {
-    ///   optional int32 value;
+    /// optional group items (List) {
+    ///   repeated group list {
+    ///     optional int32 element;
+    ///   }
     /// }
     /// ```
-    /// - maxDefinitionLevel = 2 (repeated +1, optional +1)
-    /// - repeatedAncestorDefLevel = 1 (the repeated group's def level)
+    /// - maxDefinitionLevel = 3 (optional +1, repeated +1, optional +1)
+    /// - maxRepetitionLevel = 1 (from repeated group)
+    /// - repeatedAncestorDefLevel = 1 (def level when optional parent is present)
     ///
     /// Matches Arrow's `definition_level_of_list` logic.
     public var repeatedAncestorDefLevel: Int? {
@@ -228,8 +231,11 @@ public struct Column {
 
             switch repetition {
             case .repeated:
-                defLevel += 1  // list itself contributes 1 def level
-                return defLevel  // this list's def level is what we need
+                // Return the definition level at which this repeated ancestor is "present"
+                // This is the current defLevel, NOT defLevel + 1
+                // The repeated group is considered "present but empty" when def equals
+                // the sum of optional/repeated ancestors BEFORE the repeated group itself
+                return defLevel
             case .optional:
                 defLevel += 1
             case .required:
@@ -238,6 +244,71 @@ public struct Column {
         }
 
         return nil  // No repeated ancestor found
+    }
+
+    /// Array of definition levels at which each repeated ancestor is "present but empty".
+    ///
+    /// Returns nil if the column is not repeated (`maxRepetitionLevel == 0`).
+    ///
+    /// For multi-level nested types (maxRepetitionLevel > 1), this returns an array
+    /// where index i contains the definition level for the repeated ancestor at repetition level i+1.
+    ///
+    /// Example:
+    /// ```
+    /// optional group outer (List) {
+    ///   repeated group outer_list {        // rep level 1
+    ///     optional group inner (List) {
+    ///       repeated group inner_list {    // rep level 2
+    ///         optional int32 element;
+    ///       }
+    ///     }
+    ///   }
+    /// }
+    /// ```
+    /// - maxRepetitionLevel = 2
+    /// - repeatedAncestorDefLevels = [1, 3]
+    ///   - Index 0 (rep level 1): outer list present at def=1
+    ///   - Index 1 (rep level 2): inner list present at def=3
+    public var repeatedAncestorDefLevels: [Int]? {
+        guard maxRepetitionLevel > 0 else { return nil }
+
+        var result: [Int] = []
+        var nodes: [SchemaElement] = []
+        var current: SchemaElement? = element
+
+        // Build path from root to leaf
+        while let node = current {
+            nodes.append(node)
+            current = node.parent
+        }
+        nodes.reverse()  // root first
+
+        var defLevel = 0
+        var repeatedCount = 0
+
+        // Walk the path (skip root at index 0)
+        guard nodes.count >= 2 else {
+            return []
+        }
+
+        for node in nodes[1...] {
+            guard let repetition = node.repetitionType else { continue }
+
+            switch repetition {
+            case .repeated:
+                // This repeated node's def level is the current accumulated def
+                result.append(defLevel)
+                repeatedCount += 1
+                // Repeated nodes also contribute 1 to definition level
+                defLevel += 1
+            case .optional:
+                defLevel += 1
+            case .required:
+                break
+            }
+        }
+
+        return result
     }
 }
 

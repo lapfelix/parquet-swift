@@ -28,8 +28,9 @@ Current implementation supports:
 - ✅ Required (non-nullable) primitive columns
 - ✅ **Nullable columns (definition level support)** ✨
 - ✅ All primitive types: Int32, Int64, Float, Double, String
-- ✅ **Repeated columns (single-level arrays/lists)** ✨ NEW!
-- ❌ Multi-level nested types (nested lists, maps, structs)
+- ✅ **Repeated columns (single-level arrays/lists)** ✨
+- ✅ **Multi-level nested lists (lists of lists)** ✨ NEW!
+- ❌ Maps and structs (nested non-list types)
 
 See [docs/limitations.md](docs/limitations.md) for complete details and workarounds.
 

@@ -263,20 +263,24 @@ public final class Int32ColumnReader {
         return values
     }
 
-    /// Read all remaining values for a repeated column (returns nested arrays)
+    /// Read all remaining values for a single-level repeated column (returns nested arrays)
     ///
-    /// This method is for columns with `maxRepetitionLevel > 0` (repeated fields).
+    /// This method is for columns with `maxRepetitionLevel == 1` (single-level repeated fields).
     /// It reconstructs arrays from the flat value sequence using repetition levels.
     ///
-    /// - Returns: Array of arrays where inner nil represents NULL elements
+    /// - Returns: Array of arrays where:
+    ///   - Outer nil represents NULL list (list not present)
+    ///   - Inner nil represents NULL element (element not present)
+    ///   - Empty array [] represents empty list (list present, zero elements)
+    ///
     /// - Throws: `ColumnReaderError` if column is not repeated or reading fails
     ///
     /// # Example
     ///
     /// For schema: `repeated int32 numbers;`
-    /// Data: [[1, 2], [], [3]]
-    /// Returns: [[1, 2], [], [3]]
-    public func readAllRepeated() throws -> [[Int32?]] {
+    /// Data: [[1, 2], None, [], [3]]
+    /// Returns: [[1, 2], nil, [], [3]]
+    public func readAllRepeated() throws -> [[Int32?]?] {
         guard maxRepetitionLevel > 0 else {
             throw ColumnReaderError.unsupportedFeature(
                 "Column is not repeated (maxRepetitionLevel = 0). Use readAll() instead."
@@ -350,6 +354,104 @@ public final class Int32ColumnReader {
             maxDefinitionLevel: maxDefinitionLevel,
             maxRepetitionLevel: maxRepetitionLevel,
             repeatedAncestorDefLevel: repeatedAncestorDefLevel
+        )
+    }
+
+    /// Read all remaining values for a multi-level repeated column (returns nested arrays)
+    ///
+    /// This method is for columns with `maxRepetitionLevel > 1` (multi-level repeated fields)
+    /// such as lists of lists, lists of structs with repeated fields, etc.
+    ///
+    /// - Returns: Nested array structure as `Any`. Callers must cast based on maxRepetitionLevel:
+    ///   - maxRepLevel=2: `[[[Int32?]?]?]` (list of optional lists of optional Int32)
+    ///   - maxRepLevel=3: `[[[[Int32?]?]?]?]` (and so on)
+    ///
+    /// - Throws: `ColumnReaderError` if column is not multi-level repeated or reading fails
+    ///
+    /// # Example
+    ///
+    /// ```swift
+    /// // For schema with maxRepetitionLevel == 2
+    /// let result = try column.readAllNested()
+    /// let typedResult = result as! [[[Int32?]?]?]
+    /// // typedResult contains lists of lists of optional Int32 values
+    /// ```
+    public func readAllNested() throws -> Any {
+        let maxRep = maxRepetitionLevel
+        let maxDef = maxDefinitionLevel
+
+        guard maxRep > 1 else {
+            throw ColumnReaderError.unsupportedFeature(
+                "Column is not multi-level repeated (maxRepetitionLevel = \(maxRep)). " +
+                "Use readAllRepeated() for single-level or readAll() for flat columns."
+            )
+        }
+
+        guard let repeatedAncestorDefLevels = column.repeatedAncestorDefLevels else {
+            throw ColumnReaderError.internalError(
+                "Cannot compute repeatedAncestorDefLevels for multi-level repeated column"
+            )
+        }
+
+        // Collect all values and levels
+        var allValues: [Int32] = []
+        var allDefLevels: [UInt16] = []
+        var allRepLevels: [UInt16] = []
+
+        // Read through all pages
+        while try loadPageIfNeeded() {
+            guard let defLevels = currentDefinitionLevels,
+                  let repLevels = currentRepetitionLevels else {
+                throw ColumnReaderError.internalError(
+                    "Multi-level repeated column must have definition and repetition levels"
+                )
+            }
+
+            let numValuesInPage = currentPage!.numValues
+
+            // Collect levels for this page
+            for i in 0..<numValuesInPage {
+                let defLevel = defLevels[i]
+                let repLevel = repLevels[i]
+
+                allDefLevels.append(defLevel)
+                allRepLevels.append(repLevel)
+
+                // Collect value only if non-null
+                if defLevel >= maxDefinitionLevel {
+                    let value: Int32
+                    if let decoder = currentDecoder {
+                        value = try decoder.decodeOne()
+                    } else if let indices = currentIndices, let dict = dictionary {
+                        value = try dict.value(at: indices[nonNullValuesRead])
+                    } else {
+                        throw ColumnReaderError.internalError("No decoder or indices available")
+                    }
+                    allValues.append(value)
+                    nonNullValuesRead += 1
+                }
+
+                valuesReadFromPage += 1
+            }
+
+            // Mark page as exhausted
+            currentPage = nil
+            currentDecoder = nil
+            currentIndices = nil
+            currentDefinitionLevels = nil
+            currentRepetitionLevels = nil
+            valuesReadFromPage = 0
+            nonNullValuesRead = 0
+        }
+
+        // Reconstruct nested arrays
+        return try ArrayReconstructor.reconstructNestedArrays(
+            values: allValues,
+            definitionLevels: allDefLevels,
+            repetitionLevels: allRepLevels,
+            maxDefinitionLevel: maxDef,
+            maxRepetitionLevel: maxRep,
+            repeatedAncestorDefLevels: repeatedAncestorDefLevels
         )
     }
 
