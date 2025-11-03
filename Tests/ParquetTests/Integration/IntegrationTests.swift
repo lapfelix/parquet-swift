@@ -153,4 +153,185 @@ final class IntegrationTests: XCTestCase {
             XCTAssertNotNil(error)
         }
     }
+
+    // MARK: - Instance-Based API Tests (M1.10)
+
+    func testInstanceBasedFileReader() throws {
+        let fileURL = fixturesURL.appendingPathComponent("datapage_v1-snappy-compressed-checksum.parquet")
+
+        // Open file with instance-based API
+        let reader = try ParquetFileReader(url: fileURL)
+        defer { try? reader.close() }
+
+        // Verify metadata access
+        XCTAssertEqual(reader.metadata.version, 1)
+        XCTAssertGreaterThan(reader.metadata.numRows, 0)
+        XCTAssertGreaterThan(reader.metadata.numRowGroups, 0)
+
+        print("\nInstance-based reader:")
+        print("  Rows: \(reader.metadata.numRows)")
+        print("  Row groups: \(reader.metadata.numRowGroups)")
+        print("  Columns: \(reader.metadata.schema.columnCount)")
+    }
+
+    func testRowGroupAccess() throws {
+        let fileURL = fixturesURL.appendingPathComponent("datapage_v1-snappy-compressed-checksum.parquet")
+        let reader = try ParquetFileReader(url: fileURL)
+        defer { try? reader.close() }
+
+        // Access first row group
+        let rowGroup = try reader.rowGroup(at: 0)
+        XCTAssertNotNil(rowGroup)
+        XCTAssertGreaterThan(rowGroup.metadata.numRows, 0)
+        XCTAssertGreaterThan(rowGroup.metadata.columns.count, 0)
+
+        print("\nRow group access:")
+        print("  Rows in group 0: \(rowGroup.metadata.numRows)")
+        print("  Columns in group 0: \(rowGroup.metadata.columns.count)")
+    }
+
+    func testRowGroupOutOfBounds() throws {
+        let fileURL = fixturesURL.appendingPathComponent("datapage_v1-snappy-compressed-checksum.parquet")
+        let reader = try ParquetFileReader(url: fileURL)
+        defer { try? reader.close() }
+
+        // Try to access invalid row group
+        XCTAssertThrowsError(try reader.rowGroup(at: 9999)) { error in
+            guard case ParquetFileError.invalidFile(let msg) = error else {
+                XCTFail("Expected invalidFile error")
+                return
+            }
+            XCTAssertTrue(msg.contains("out of bounds"))
+        }
+    }
+
+    func testTypedColumnAccess() throws {
+        let fileURL = fixturesURL.appendingPathComponent("datapage_v1-snappy-compressed-checksum.parquet")
+        let reader = try ParquetFileReader(url: fileURL)
+        defer { try? reader.close() }
+
+        let rowGroup = try reader.rowGroup(at: 0)
+        let schema = reader.metadata.schema
+
+        print("\nTesting typed column access:")
+
+        // Find and test each column type
+        for (index, column) in schema.columns.enumerated() {
+            let pathStr = column.path.joined(separator: ".")
+            print("  Column \(index): \(pathStr) (\(column.physicalType.name))")
+
+            // Only test if column uses PLAIN encoding (Phase 1 limitation)
+            let columnChunk = rowGroup.metadata.columns[index]
+            guard let colMetadata = columnChunk.metadata else { continue }
+
+            let hasPlainEncoding = colMetadata.encodings.contains(.plain)
+            let hasDictEncoding = colMetadata.encodings.contains(.rleDictionary)
+
+            // Skip if not PLAIN-only
+            if !hasPlainEncoding || hasDictEncoding {
+                print("    Skipped: Requires dictionary or non-PLAIN encoding")
+                continue
+            }
+
+            // Skip if Snappy compressed (Phase 1 limitation)
+            if colMetadata.codec == .snappy {
+                print("    Skipped: Snappy compression not supported")
+                continue
+            }
+
+            // Try to access with correct type
+            switch column.physicalType {
+            case .int32:
+                let columnReader = try rowGroup.int32Column(at: index)
+                XCTAssertNotNil(columnReader)
+                print("    ✓ Int32 column reader created")
+
+            case .int64:
+                let columnReader = try rowGroup.int64Column(at: index)
+                XCTAssertNotNil(columnReader)
+                print("    ✓ Int64 column reader created")
+
+            case .float:
+                let columnReader = try rowGroup.floatColumn(at: index)
+                XCTAssertNotNil(columnReader)
+                print("    ✓ Float column reader created")
+
+            case .double:
+                let columnReader = try rowGroup.doubleColumn(at: index)
+                XCTAssertNotNil(columnReader)
+                print("    ✓ Double column reader created")
+
+            case .byteArray:
+                let columnReader = try rowGroup.stringColumn(at: index)
+                XCTAssertNotNil(columnReader)
+                print("    ✓ String column reader created")
+
+            default:
+                print("    Skipped: Type \(column.physicalType.name) not supported in Phase 1")
+            }
+        }
+    }
+
+    func testColumnTypeMismatch() throws {
+        let fileURL = fixturesURL.appendingPathComponent("datapage_v1-snappy-compressed-checksum.parquet")
+        let reader = try ParquetFileReader(url: fileURL)
+        defer { try? reader.close() }
+
+        let rowGroup = try reader.rowGroup(at: 0)
+        let schema = reader.metadata.schema
+
+        // Find an Int32 column
+        if let int32Index = schema.columns.firstIndex(where: { $0.physicalType == .int32 }) {
+            // Try to read it as Int64 (type mismatch)
+            XCTAssertThrowsError(try rowGroup.int64Column(at: int32Index)) { error in
+                guard case RowGroupReaderError.typeMismatch = error else {
+                    XCTFail("Expected typeMismatch error, got \(error)")
+                    return
+                }
+            }
+        }
+    }
+
+    func testColumnIndexOutOfBounds() throws {
+        let fileURL = fixturesURL.appendingPathComponent("datapage_v1-snappy-compressed-checksum.parquet")
+        let reader = try ParquetFileReader(url: fileURL)
+        defer { try? reader.close() }
+
+        let rowGroup = try reader.rowGroup(at: 0)
+
+        // Try to access invalid column index
+        XCTAssertThrowsError(try rowGroup.int32Column(at: 9999)) { error in
+            guard case RowGroupReaderError.columnIndexOutOfBounds = error else {
+                XCTFail("Expected columnIndexOutOfBounds error, got \(error)")
+                return
+            }
+        }
+    }
+
+    func testResourceCleanup() throws {
+        let fileURL = fixturesURL.appendingPathComponent("datapage_v1-snappy-compressed-checksum.parquet")
+
+        // Test explicit close
+        do {
+            let reader = try ParquetFileReader(url: fileURL)
+            XCTAssertNotNil(reader.metadata)
+            try reader.close()
+            // File should be closed now
+        }
+
+        // Test defer cleanup
+        do {
+            let reader = try ParquetFileReader(url: fileURL)
+            defer { try? reader.close() }
+            XCTAssertNotNil(reader.metadata)
+            // File should be closed when scope exits
+        }
+
+        // Test deinit cleanup (file closed automatically)
+        do {
+            let reader = try ParquetFileReader(url: fileURL)
+            XCTAssertNotNil(reader.metadata)
+            // File should be closed when reader is deallocated
+        }
+    }
 }

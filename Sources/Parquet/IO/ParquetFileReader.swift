@@ -10,7 +10,7 @@ public enum ParquetFileError: Error {
     case ioError(String)
 }
 
-/// Basic Parquet file reader (Phase 1 - metadata only).
+/// Parquet file reader for reading columnar data.
 ///
 /// Parquet file format:
 /// - Header: "PAR1" magic (4 bytes)
@@ -20,18 +20,79 @@ public enum ParquetFileError: Error {
 ///
 /// Example usage:
 /// ```swift
+/// // Instance-based API (recommended)
+/// let reader = try ParquetFileReader(url: fileURL)
+/// defer { try? reader.close() }
+/// print("Rows: \(reader.metadata.numRows)")
+///
+/// let rowGroup = try reader.rowGroup(at: 0)
+/// let column = try rowGroup.int32Column(at: 0)
+/// let values = try column.readAll()
+///
+/// // Static API (for metadata-only access)
 /// let metadata = try ParquetFileReader.readMetadata(from: fileURL)
-/// print("Rows: \(metadata.numRows)")
 /// print("Row groups: \(metadata.numRowGroups)")
-/// for rowGroup in metadata.rowGroups {
-///     print("  Row group: \(rowGroup.numRows) rows")
-/// }
 /// ```
-public struct ParquetFileReader {
+public final class ParquetFileReader {
     /// The magic bytes that identify a Parquet file.
     public static let magic: Data = Data([0x50, 0x41, 0x52, 0x31]) // "PAR1"
 
-    // MARK: - Public API (returns wrapper types)
+    // MARK: - Instance Properties
+
+    /// The file being read.
+    private let file: FileRandomAccessFile
+
+    /// The file metadata.
+    public let metadata: FileMetadata
+
+    // MARK: - Initialization
+
+    /// Opens a Parquet file for reading.
+    ///
+    /// - Parameter url: The URL of the Parquet file
+    /// - Throws: ParquetFileError or IOError if the file cannot be opened
+    public init(url: URL) throws {
+        self.file = try FileRandomAccessFile(url: url)
+
+        do {
+            let reader = BufferedReader(file: self.file)
+            let thrift = try Self.readThriftMetadata(from: reader)
+            self.metadata = try FileMetadata(thrift: thrift)
+        } catch {
+            // Clean up on initialization failure
+            try? self.file.close()
+            throw error
+        }
+    }
+
+    /// Closes the file.
+    ///
+    /// You should call this when done reading, or use `defer { try? reader.close() }`.
+    public func close() throws {
+        try file.close()
+    }
+
+    deinit {
+        // Best effort cleanup if close() wasn't called
+        try? file.close()
+    }
+
+    // MARK: - Row Group Access
+
+    /// Returns a reader for the specified row group.
+    ///
+    /// - Parameter index: The row group index (0-based)
+    /// - Returns: A row group reader
+    /// - Throws: ParquetFileError if the index is out of bounds
+    public func rowGroup(at index: Int) throws -> RowGroupReader {
+        guard index >= 0 && index < metadata.numRowGroups else {
+            throw ParquetFileError.invalidFile("Row group index \(index) out of bounds (0..<\(metadata.numRowGroups))")
+        }
+        let rowGroupMetadata = metadata.rowGroups[index]
+        return RowGroupReader(file: file, metadata: rowGroupMetadata, schema: metadata.schema)
+    }
+
+    // MARK: - Static API (Convenience Methods)
 
     /// Reads file metadata from a Parquet file.
     ///

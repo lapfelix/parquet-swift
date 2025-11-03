@@ -10,10 +10,10 @@ A native Swift implementation of the Apache Parquet columnar storage format.
 
 🚧 **In Active Development** - Phase 1 (Practical Reader)
 
-Current milestone: **M1.9 - Column Reader** ✅
-Last completed: M1.8 - Compression Support ✅
+Current milestone: **M1.10 - File Reader API** ✅
+Last completed: M1.9 - Column Reader ✅
 
-See [implementation roadmap](docs/implementation-roadmap.md) for detailed development plan.
+**Phase 1 Complete!** All core reading components implemented. See [implementation roadmap](docs/implementation-roadmap.md) for next steps.
 
 ### Known Limitations
 
@@ -40,17 +40,23 @@ This library is under active development and the API may change between mileston
 
 ## Features (Planned)
 
-### Phase 1 (10 weeks) - Practical Reader
+### Phase 1 (Complete ✅) - Practical Reader
 - ✅ Project setup and architecture
 - ✅ Core type system
 - ✅ Thrift metadata parsing (Compact Binary Protocol)
 - ✅ Schema representation and tree building
 - ✅ Basic I/O layer (file reading, buffered access)
 - ✅ Metadata wrapper API (idiomatic Swift types)
-- 🚧 PLAIN + DICTIONARY encoding
-- 🚧 Optional columns (null handling)
-- 🚧 GZIP + Snappy compression
-- 🚧 Read flat-schema Parquet files
+- ✅ PLAIN encoding for all primitive types
+- ✅ GZIP + UNCOMPRESSED codecs
+- ✅ Column readers (Int32, Int64, Float, Double, String)
+- ✅ File Reader API (instance-based, type-safe)
+
+**Deferred to Phase 2:**
+- Dictionary encoding
+- Snappy compression
+- Optional columns (null handling)
+- Nested types
 
 ### Phase 2 (6-8 weeks) - Full Reader
 - Nested types (lists, maps, structs)
@@ -86,20 +92,36 @@ Then import:
 import Parquet
 ```
 
-## Quick Start (Coming Soon)
+## Quick Start
 
 ```swift
 import Parquet
 
-// Read a Parquet file
-let reader = try ParquetFileReader(path: "data.parquet")
-print("Rows: \(reader.metadata.numRows)")
+// Open a Parquet file
+let reader = try ParquetFileReader(url: fileURL)
+defer { try? reader.close() }
 
-// Read a column
+print("Rows: \(reader.metadata.numRows)")
+print("Columns: \(reader.metadata.schema.columnCount)")
+
+// Access a row group
 let rowGroup = try reader.rowGroup(at: 0)
-let column = try rowGroup.column(at: 0)
-let values: [Int32] = try column.read(count: 100)
+
+// Read typed columns
+let idColumn = try rowGroup.int32Column(at: 0)
+let ids = try idColumn.readAll()  // Returns flattened [Int32] array
+
+let nameColumn = try rowGroup.stringColumn(at: 4)
+let names = try nameColumn.readAll()  // Returns flattened [String] array
+
+// For large columns, use readBatch() to control memory:
+let batch = try idColumn.readBatch(count: 1000)  // Read in chunks
+
+print("First 10 IDs: \(ids.prefix(10))")
+print("First 10 names: \(names.prefix(10))")
 ```
+
+**Note:** Phase 1 supports PLAIN encoding with UNCOMPRESSED or GZIP compression only. See [Known Limitations](#known-limitations) for details.
 
 ## Requirements
 
@@ -213,6 +235,6 @@ Licensed under the Apache License, Version 2.0. See [LICENSE](LICENSE) for detai
 
 ---
 
-**Status**: Pre-alpha, active development
-**Current Phase**: Phase 1 - Practical Reader 🚧
-**Next Milestone**: M1.5 - Basic I/O Layer
+**Status**: Alpha - Phase 1 Complete ✅
+**Current Phase**: Phase 1 - Practical Reader ✅
+**Next Phase**: Phase 2 - Full Reader (Dictionary encoding, Snappy, nulls, nested types)
