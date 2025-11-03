@@ -21,15 +21,15 @@ Last completed: M2.2 - Dictionary Encoding (All Types) ✅
 
 Current implementation supports:
 - ✅ parquet-mr generated files (Spark, Hive, parquet-mr tools)
-- ✅ **PyArrow-generated files** (parquet-cpp-arrow) ✨ NEW!
+- ✅ **PyArrow-generated files** (parquet-cpp-arrow) ✨
 - ✅ PLAIN encoding
 - ✅ Dictionary encoding (RLE_DICTIONARY, PLAIN_DICTIONARY)
 - ✅ UNCOMPRESSED, GZIP, and Snappy compression
 - ✅ Required (non-nullable) primitive columns
 - ✅ **Nullable columns (definition level support)** ✨
 - ✅ All primitive types: Int32, Int64, Float, Double, String
-- 🚧 Repeated columns (repetition level infrastructure complete, array reading pending)
-- ❌ Nested types (lists, maps, structs)
+- ✅ **Repeated columns (single-level arrays/lists)** ✨ NEW!
+- ❌ Multi-level nested types (nested lists, maps, structs)
 
 See [docs/limitations.md](docs/limitations.md) for complete details and workarounds.
 
@@ -64,10 +64,11 @@ This library is under active development and the API may change between mileston
 ### Phase 3 (In Progress 🚧) - Advanced Reader Features
 - ✅ **Definition levels** (nullable columns) - ALL primitive types!
 - ✅ **PyArrow compatibility** - Fixed critical Thrift parsing bugs!
-- 🚧 **Repetition levels** (infrastructure complete, array reading pending)
+- ✅ **Repetition levels and array reconstruction** - Single-level repeated fields!
   - ✅ Decode repetition levels from pages
-  - ⏳ Use repetition levels to reconstruct arrays
-- 🚧 Nested types (lists, maps, structs)
+  - ✅ Reconstruct arrays from flat value sequences
+  - ✅ `readAllRepeated()` API for [[T?]] return type
+- 🚧 Multi-level nested types (nested lists, maps, structs)
 
 **Still Deferred:**
 - Delta encodings
@@ -117,12 +118,17 @@ print("Columns: \(reader.metadata.schema.columnCount)")
 // Access a row group
 let rowGroup = try reader.rowGroup(at: 0)
 
-// Read typed columns
+// Read flat (non-repeated) columns
 let idColumn = try rowGroup.int32Column(at: 0)
-let ids = try idColumn.readAll()  // Returns flattened [Int32] array
+let ids = try idColumn.readAll()  // Returns [Int32?] for nullable columns
 
 let nameColumn = try rowGroup.stringColumn(at: 4)
-let names = try nameColumn.readAll()  // Returns flattened [String] array
+let names = try nameColumn.readAll()  // Returns [String?] for nullable columns
+
+// Read repeated columns (arrays/lists)
+let arrayColumn = try rowGroup.int32Column(at: 5)
+let arrays = try arrayColumn.readAllRepeated()  // Returns [[Int32?]]
+// Example: [[1, 2], [], [3, nil, 4]]
 
 // For large columns, use readBatch() to control memory:
 let batch = try idColumn.readBatch(count: 1000)  // Read in chunks

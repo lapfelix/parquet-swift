@@ -3,6 +3,7 @@
 This document tracks known limitations and compatibility issues in the current implementation.
 
 **Latest Updates**:
+- ✅ Array reconstruction for repeated columns (Phase 3)
 - ✅ PyArrow compatibility fixed (Phase 3)
 - ✅ Nullable columns fully supported (Phase 3)
 - ✅ Dictionary encoding for all types (Phase 2)
@@ -134,19 +135,21 @@ This document tracks known limitations and compatibility issues in the current i
 
 Phase 3 implementation supports:
 - ✅ parquet-mr generated files (Spark, Hive, parquet-mr tools)
-- ✅ **PyArrow-generated files** (parquet-cpp-arrow) ✨ NEW!
+- ✅ **PyArrow-generated files** (parquet-cpp-arrow) ✨
 - ✅ PLAIN encoding
 - ✅ **Dictionary encoding (RLE_DICTIONARY, PLAIN_DICTIONARY)** ✨
 - ✅ UNCOMPRESSED, GZIP, and **Snappy** compression
 - ✅ **All primitive types: Int32, Int64, Float, Double, String** ✨
 - ✅ **Required (non-nullable) columns** ✨
 - ✅ **Nullable columns (definition level support)** ✨
+- ✅ **Repeated columns (single-level arrays/lists)** ✨ NEW!
 
 **Major Improvements**:
 - ✅ **PyArrow compatibility** - Python ecosystem files now readable! (pandas, PyArrow, Dask) 🎉
 - ✅ Snappy compression support (~80% of production files)
 - ✅ Dictionary encoding for ALL primitive types (~90% of string/enum columns!)
 - ✅ **Nullable column support** - can read NULL values in optional columns! (~90% of schemas!)
+- ✅ **Repeated column support** - can read arrays/lists with empty lists and null elements! 🎉
 
 ### Dictionary Encoding - Complete Status
 
@@ -159,10 +162,19 @@ Phase 3 implementation supports:
 - ✅ Strict byte-exact validation
 - ✅ Definition level decoding for nullable columns
 
-**What doesn't work yet:**
-- 🚧 **Repeated columns** (maxRepetitionLevel > 0) - Infrastructure complete, array reading pending
+**What works with repeated columns:**
+- ✅ **Single-level repeated columns** (maxRepetitionLevel = 1) - FULLY SUPPORTED!
   - ✅ Repetition levels decoded from pages
-  - ⏳ Array reconstruction logic not yet implemented
+  - ✅ Array reconstruction logic implemented
+  - ✅ `readAllRepeated()` API returns `[[T?]]` for arrays with nullable elements
+  - ✅ Handles empty lists, null elements, and all primitive types
+  - ✅ All 5 column types: Int32, Int64, Float, Double, String
+
+**What doesn't work yet:**
+- 🚧 **Multi-level nested types** (maxRepetitionLevel > 1) - Not yet implemented
+  - ❌ Nested lists (lists of lists)
+  - ❌ Lists of structs
+  - ❌ Complex nested schemas
 
 **Phase 3 Achievement:**
 
@@ -171,16 +183,18 @@ to determine which values are NULL. Both PLAIN and dictionary encoding work corr
 nullable columns.
 
 Still **does not work** with:
-- 🚧 Repeated columns (repetition levels) - **Infrastructure complete**, array reading pending
-- ❌ Nested types (lists, maps, structs) - Phase 4+
+- ❌ Multi-level nested types (lists of lists, lists of structs, maps, nested structs) - Phase 4+
 
 Completed milestones:
 1. ✅ **Dictionary encoding for required columns** (Phase 2.1)
 2. ✅ **Extend dictionary encoding to all types** (Phase 2.2)
-3. ✅ **Definition levels** (nullable columns) (Phase 3) ✨ DONE!
-4. ✅ **PyArrow compatibility** (Python ecosystem) ✨ DONE!
-5. 🚧 **Repetition level infrastructure** (Phase 3) - Decoding complete, array reading pending
+3. ✅ **Definition levels** (nullable columns) (Phase 3) ✨
+4. ✅ **PyArrow compatibility** (Python ecosystem) ✨
+5. ✅ **Repetition levels and array reconstruction** (Phase 3) ✨ DONE!
+   - ✅ Decode repetition levels from pages
+   - ✅ Reconstruct arrays from flat value sequences
+   - ✅ Handle empty lists and null elements
+   - ✅ `readAllRepeated()` API for all primitive types
 
 Remaining priorities:
-6. **Array reconstruction** (use repetition levels to build arrays) - Next step
-7. **Nested types** (lists, maps, structs) - Phase 4+
+6. **Multi-level nested types** (nested lists, lists of structs, maps) - Phase 4+
