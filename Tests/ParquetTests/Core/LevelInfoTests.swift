@@ -88,13 +88,14 @@ final class LevelInfoTests: XCTestCase {
 
     func testRequiredListLevels() {
         // For: required group items (LIST) { repeated group list { required int32 element; } }
-        // Expected: maxDef=1, maxRep=1, repeatedAncestorDef=1
-        let info = LevelInfo(defLevel: 1, repLevel: 1, repeatedAncestorDefLevel: 1)
+        // Expected: maxDef=1, maxRep=1, repeatedAncestorDef=0
+        // Note: No outer optional wrapper, so threshold is 0
+        let info = LevelInfo(defLevel: 1, repLevel: 1, repeatedAncestorDefLevel: 0)
 
-        XCTAssertFalse(info.hasNullableValues, "Element is required, should not be nullable")
+        XCTAssertTrue(info.hasNullableValues, "def (1) > repeatedAncestorDef (0), so hasNullableValues is true")
         XCTAssertEqual(info.defLevel, 1)
         XCTAssertEqual(info.repLevel, 1)
-        XCTAssertEqual(info.repeatedAncestorDefLevel, 1)
+        XCTAssertEqual(info.repeatedAncestorDefLevel, 0)
     }
 
     func testNestedListLevelsFromSchema() throws {

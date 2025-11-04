@@ -45,6 +45,214 @@ struct ArrayReconstructor {
         case populated      // def > ancestorDef → list with elements/nulls
     }
 
+    /// Output structure for validity bitmap reconstruction, matching Arrow C++'s ValidityBitmapInputOutput
+    ///
+    /// Used by DefRepLevelsToListInfo to track:
+    /// - Number of values/lists processed
+    /// - Null count
+    /// - Validity bitmap (which lists/values are present vs NULL)
+    public struct ValidityBitmapOutput {
+        /// Maximum number of values/lists expected (upper bound for safety)
+        /// Set this to prevent unbounded allocation from malformed data
+        public var valuesReadUpperBound: Int?
+
+        /// Number of values/lists successfully read and added to output
+        public var valuesRead: Int = 0
+
+        /// Number of NULL values/lists encountered
+        public var nullCount: Int = 0
+
+        /// Validity bitmap: true = present (possibly empty), false = NULL
+        /// For lists: each entry represents one list
+        /// For structs: each entry represents one struct instance
+        public var validBits: [Bool] = []
+
+        public init(valuesReadUpperBound: Int? = nil) {
+            self.valuesReadUpperBound = valuesReadUpperBound
+        }
+    }
+
+    // MARK: - Core Algorithm (DefRepLevelsToListInfo)
+
+    /// Reconstructs list offsets and validity bitmap from definition/repetition levels.
+    ///
+    /// This is the core algorithm ported from Apache Arrow C++'s `DefRepLevelsToListInfo`.
+    /// It filters and processes level data to build:
+    /// - Offsets array defining list boundaries (optional, nil for structs)
+    /// - Validity bitmap tracking NULL vs present lists
+    ///
+    /// **Limitation**: Currently only supports Int32 offsets (up to ~2 billion elements per list).
+    /// Arrow C++ templates on int32_t vs int64_t for large lists (LargeList/LargeMap).
+    /// Future enhancement: add Int64 variant for large list support.
+    ///
+    /// **Key Features**:
+    /// - **Filters by `rep > repLevel`**: Skips nested children (each reader processes only its level)
+    /// - **Filters by `def < repeatedAncestorDefLevel`**: Skips continuation values from NULL ancestor lists
+    ///   - Applied ONLY to continuation entries (rep == repLevel)
+    ///   - For new lists (rep < repLevel), ALWAYS creates offset and validity entries
+    ///   - Prevents incrementing offsets for values belonging to NULL ancestors
+    /// - **Distinguishes NULL/empty/present lists**:
+    ///   - `def < repeatedAncestorDefLevel`: NULL list (validity=false, offset not incremented)
+    ///   - `def == repeatedAncestorDefLevel`: Empty list (validity=true, offset not incremented)
+    ///   - `def > repeatedAncestorDefLevel`: List with content (validity=true, offset incremented)
+    /// - Supports multi-level nesting through level filtering
+    ///
+    /// - Parameters:
+    ///   - definitionLevels: Definition levels from Parquet column
+    ///   - repetitionLevels: Repetition levels from Parquet column
+    ///   - levelInfo: Level metadata (defLevel, repLevel, repeatedAncestorDefLevel)
+    ///   - output: Output structure to populate with validity bitmap
+    ///   - offsets: Optional offsets array. If provided, will be populated with list boundaries.
+    ///              Pass nil for structs that don't need offset tracking.
+    ///
+    /// - Throws: `ColumnReaderError` if level data is invalid
+    ///
+    /// # Algorithm
+    ///
+    /// For each (def, rep) pair:
+    /// 1. **Filter nested children**: Skip if `rep > repLevel` (values from child structures)
+    /// 2. **If rep == repLevel** (continuation): Add element to current list
+    ///    - Filter: Skip if `def < repeatedAncestorDefLevel` (belongs to NULL ancestor)
+    ///    - Increment offset to add one more element
+    /// 3. **If rep < repLevel** (new list): Start new list
+    ///    - Always create offset and validity entries (even for NULL lists)
+    ///    - Offset increment: Only if `def > repeatedAncestorDefLevel` (list has content)
+    ///    - Validity: true if `def >= repeatedAncestorDefLevel`, false otherwise
+    ///
+    /// # Example
+    ///
+    /// ```swift
+    /// // Data: [[1, 2], None, [3]]
+    /// let defLevels: [UInt16] = [3, 3, 0, 3]  // 0=NULL list, 3=present value
+    /// let repLevels: [UInt16] = [0, 1, 0, 0]  // 0=new list, 1=continuation
+    /// let levelInfo = LevelInfo(defLevel: 3, repLevel: 1, repeatedAncestorDefLevel: 1)
+    ///
+    /// var output = ValidityBitmapOutput()
+    /// var offsets: [Int32] = [0]
+    /// try ArrayReconstructor.defRepLevelsToListInfo(
+    ///     definitionLevels: defLevels,
+    ///     repetitionLevels: repLevels,
+    ///     levelInfo: levelInfo,
+    ///     output: &output,
+    ///     offsets: &offsets
+    /// )
+    /// // offsets = [0, 2, 2, 3]  (2 values in first list, 0 in second [NULL], 1 in third)
+    /// // output.validBits = [true, false, true]  (first present, second NULL, third present)
+    /// // output.valuesRead = 3  (three lists)
+    /// // output.nullCount = 1  (one NULL list)
+    /// ```
+    public static func defRepLevelsToListInfo(
+        definitionLevels: [UInt16],
+        repetitionLevels: [UInt16],
+        levelInfo: LevelInfo,
+        output: inout ValidityBitmapOutput,
+        offsets: inout [Int32]?
+    ) throws {
+        guard definitionLevels.count == repetitionLevels.count else {
+            throw ColumnReaderError.internalError(
+                "Definition and repetition level counts must match " +
+                "(\(definitionLevels.count) vs \(repetitionLevels.count))"
+            )
+        }
+
+        for i in 0..<definitionLevels.count {
+            let defLevel = Int(definitionLevels[i])
+            let repLevel = Int(repetitionLevels[i])
+
+            // CRITICAL FILTER: Skip nested children (values with higher rep level)
+            // For example, when reading list<map>, skip map entries (they have higher rep_level)
+            // Each reader processes ONLY its own level
+            if repLevel > levelInfo.repLevel {
+                continue
+            }
+
+            if repLevel == levelInfo.repLevel {
+                // Continuation of existing list at THIS level
+
+                // Filter values belonging to ancestor NULL/empty lists
+                // This check only applies to continuation entries, not new lists
+                if defLevel < levelInfo.repeatedAncestorDefLevel {
+                    // This value belongs to a NULL/empty ancestor list, skip it
+                    continue
+                }
+
+                // Increment the current offset to add one more element
+                if offsets != nil {
+                    let lastIndex = offsets!.count - 1
+
+                    // Guardrail: Check for Int32 overflow BEFORE incrementing
+                    guard offsets![lastIndex] < Int32.max else {
+                        throw ColumnReaderError.internalError(
+                            "Offset overflow: list offsets would exceed Int32.max (\(Int32.max)). " +
+                            "Consider using a file format with 64-bit offsets for large lists."
+                        )
+                    }
+
+                    offsets![lastIndex] += 1
+                }
+            } else {
+                // repLevel < levelInfo.repLevel
+                // Start of NEW list at THIS level
+
+                // Guardrail: Check upper bound before allocating
+                if let upperBound = output.valuesReadUpperBound, output.valuesRead >= upperBound {
+                    throw ColumnReaderError.internalError(
+                        "Malformed data: attempting to read more lists (\(output.valuesRead + 1)) " +
+                        "than upper bound (\(upperBound))"
+                    )
+                }
+
+                // Append new offset
+                if offsets != nil {
+                    let previousOffset = offsets!.last!
+                    var newOffset = previousOffset
+
+                    // Check if this list has content (element present OR element NULL):
+                    // - def > repeatedAncestorDefLevel: list has at least one element (present or NULL)
+                    // - def == repeatedAncestorDefLevel: empty list (present, zero elements)
+                    // - def < repeatedAncestorDefLevel: NULL list (no elements)
+                    //
+                    // This correctly handles lists starting with NULL:
+                    // For list<int32?> where repeatedAncestorDefLevel=1, defLevel=3:
+                    // - [[NULL, 1]]: first record has def=2, rep=0 → def > 1, so increment
+                    // - [[1]]: first record has def=3, rep=0 → def > 1, so increment
+                    // - [[]]: first record has def=1, rep=0 → def == 1, don't increment
+                    // - [NULL]: first record has def=0, rep=0 → def < 1, don't increment
+                    if defLevel > levelInfo.repeatedAncestorDefLevel {
+                        // Guardrail: Check for Int32 overflow BEFORE incrementing
+                        guard previousOffset < Int32.max else {
+                            throw ColumnReaderError.internalError(
+                                "Offset overflow: list offsets would exceed Int32.max (\(Int32.max)). " +
+                                "Consider using a file format with 64-bit offsets for large lists."
+                            )
+                        }
+                        newOffset += 1  // Add first element slot (present value or NULL element)
+                    }
+
+                    offsets!.append(newOffset)
+                }
+
+                // Update validity bitmap
+                // Use repeatedAncestorDefLevel as the threshold:
+                // - def >= repeatedAncestorDefLevel: List is present (possibly empty or with content)
+                // - def < repeatedAncestorDefLevel: List is NULL
+                //
+                // For list<int> where repeatedAncestorDefLevel=1:
+                // - def=0 < 1: NULL list
+                // - def=1 >= 1: Empty list (present, zero elements)
+                // - def=2+ >= 1: List with content (NULL or present elements)
+                if defLevel >= levelInfo.repeatedAncestorDefLevel {
+                    output.validBits.append(true)  // Present (possibly empty)
+                } else {
+                    output.validBits.append(false)  // NULL
+                    output.nullCount += 1
+                }
+
+                output.valuesRead += 1
+            }
+        }
+    }
+
     // MARK: - LevelInfo-based API (Preferred)
 
     /// Reconstructs arrays from flat value sequence and def/rep levels using LevelInfo.

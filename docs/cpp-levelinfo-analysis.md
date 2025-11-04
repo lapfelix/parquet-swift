@@ -672,12 +672,31 @@ Only actual list readers need offset arrays.
 - Returns `nil` for flat columns (no repetition)
 - Validates level info matches actual data
 
-### Phase 4.2: Port DefRepLevelsToListInfo (3-4 hours)
+### Phase 4.2: Port DefRepLevelsToListInfo ✅ (COMPLETE)
 
-1. Implement core algorithm with filtering
-2. Add `offsets: inout [Int32]?` parameter (nullable for structs)
-3. Add validity bitmap reconstruction
-4. Test with `list<list<T>>` (already working), then `list<map>`
+**Date Completed**: 2025-11-03
+
+1. ✅ Implemented core algorithm with filtering
+2. ✅ Added `offsets: inout [Int32]?` parameter (nullable for structs)
+3. ✅ Added validity bitmap reconstruction via ValidityBitmapOutput struct
+4. ✅ Added guardrails: `valuesReadUpperBound` and Int32 overflow checks
+5. ✅ Tested with list<list<T>> and various edge cases
+6. ✅ Added 12 comprehensive tests covering simple lists, empty lists, NULL lists, NULL elements, nested lists, required lists, and guardrails
+
+**Key Implementation Details**:
+- **Filtering**: `rep > repLevel` skips nested children (always applied)
+- **Filtering**: `def < repeatedAncestorDefLevel` skips continuation values from NULL ancestors (only on `rep == repLevel` branch)
+- **New lists**: Always create offset and validity entries (even for NULL lists)
+- **Offset increments**: Only when `def > repeatedAncestorDefLevel` (list has content)
+- **Validity**: true if `def >= repeatedAncestorDefLevel`, false otherwise
+- **Performance**: In-place offset mutation with no copy-on-write penalty
+- **Correctness**: Properly distinguishes NULL lists, empty lists, and lists with content
+
+**Issues Fixed During Implementation**:
+- Required lists with `repeatedAncestorDefLevel = 0` now handled correctly
+- NULL lists create validity entries (not filtered out)
+- NULL-first elements counted correctly (e.g., `[[NULL, 1]]`)
+- Array copying eliminated for performance
 
 ### Phase 4.3: Port DefRepLevelsToBitmap (2-3 hours)
 
@@ -752,8 +771,8 @@ Swift implementation progress:
 - ✅ Recursive `hasRepeatedOrComplexDescendants()` detection
 - ✅ `ArrayReconstructor` for lists (can be extended)
 - ✅ **Phase 4.1 COMPLETE**: `LevelInfo` struct with factory method and comprehensive tests
-- 🚧 Need `DefRepLevelsToListInfo` with filtering (Phase 4.2)
+- ✅ **Phase 4.2 COMPLETE**: `DefRepLevelsToListInfo` with filtering and validity bitmap reconstruction
 - 🚧 Need `DefRepLevelsToBitmap` for structs (Phase 4.3)
 - 🚧 Need branching in StructReader based on `hasRepeatedChild` (Phase 4.4)
 
-**Next steps**: Implement Phase 4.2-4.6 following the roadmap above.
+**Next steps**: Implement Phase 4.3-4.6 following the roadmap above.

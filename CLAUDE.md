@@ -6,10 +6,10 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 This is a native Swift implementation of the Apache Parquet columnar storage format, porting the Apache Arrow C++ implementation. The project is in Phase 2 (Full Reader) development.
 
-**Current Status**: Phase 4 in progress - Complex nested types (LevelInfo complete)
+**Current Status**: Phase 4 in progress - Complex nested types (LevelInfo + DefRepLevelsToListInfo complete)
 **Phase 1**: Complete (Practical Reader)
 **Phase 2**: In progress (Snappy ✅, Dictionary 🚧, Nulls 🚧, Basic nested types ✅)
-**Phase 4**: In progress (LevelInfo ✅, DefRepLevelsToListInfo 🚧)
+**Phase 4**: In progress (LevelInfo ✅, DefRepLevelsToListInfo ✅)
 
 ## Build & Test Commands
 
