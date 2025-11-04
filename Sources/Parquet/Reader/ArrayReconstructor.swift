@@ -253,6 +253,93 @@ struct ArrayReconstructor {
         }
     }
 
+    /// Reconstructs validity bitmap for structs containing repeated children (maps/lists).
+    ///
+    /// This is a wrapper around `defRepLevelsToListInfo` specifically for struct validity bitmaps
+    /// when the struct contains repeated descendants (e.g., `struct { map }` or `struct { list }`).
+    ///
+    /// Ported from Apache Arrow C++ `DefRepLevelsToBitmap` (level_conversion.cc:168-177).
+    ///
+    /// ## Why This Function Exists
+    ///
+    /// When a struct contains lists or maps, we need **both** definition and repetition levels
+    /// to reconstruct the struct's validity bitmap correctly. This is because:
+    ///
+    /// - Child lists/maps contribute repetition levels
+    /// - We need to filter out values that belong to NULL ancestor structs
+    /// - Simple definition-only approach (`defLevelsToBitmap`) doesn't work
+    ///
+    /// ## Key Difference from defRepLevelsToListInfo
+    ///
+    /// This function **bumps levels by 1** before calling `defRepLevelsToListInfo` because:
+    /// - `defRepLevelsToListInfo` assumes it's processing the list/map itself
+    /// - Here we're processing the **parent struct** that contains the list/map
+    /// - Bumping levels adjusts the thresholds to the parent's perspective
+    ///
+    /// ## Example
+    ///
+    /// ```swift
+    /// // Schema: struct { list<int32> items; }
+    /// // Struct validity needs both def and rep levels from the child list column
+    ///
+    /// let levelInfo = LevelInfo(defLevel: 2, repLevel: 1, repeatedAncestorDefLevel: 1)
+    /// var output = ArrayReconstructor.ValidityBitmapOutput()
+    ///
+    /// try ArrayReconstructor.defRepLevelsToBitmap(
+    ///     definitionLevels: childDefLevels,
+    ///     repetitionLevels: childRepLevels,
+    ///     levelInfo: levelInfo,
+    ///     output: &output
+    /// )
+    /// // output.validBits contains struct validity (not list validity)
+    /// ```
+    ///
+    /// - Parameters:
+    ///   - definitionLevels: Definition levels from child column
+    ///   - repetitionLevels: Repetition levels from child column
+    ///   - levelInfo: Level metadata for the **struct** (not the child)
+    ///   - output: Output structure to populate with validity bitmap
+    ///
+    /// - Throws: `ColumnReaderError` if level data is invalid
+    ///
+    /// ## Implementation Note
+    ///
+    /// This function does NOT need an offsets parameter because structs don't have offsets,
+    /// only validity bitmaps. We pass `offsets=nil` to `defRepLevelsToListInfo`.
+    public static func defRepLevelsToBitmap(
+        definitionLevels: [UInt16],
+        repetitionLevels: [UInt16],
+        levelInfo: LevelInfo,
+        output: inout ValidityBitmapOutput
+    ) throws {
+        // CRITICAL: Bump levels by 1 because defRepLevelsToListInfo assumes it's
+        // processing the list/map itself, but here we're processing the parent struct.
+        //
+        // Example: For struct { list<int32> }, the list column has:
+        //   - defLevel=3, repLevel=1, repeatedAncestorDefLevel=1
+        //
+        // But for the struct validity, we need:
+        //   - defLevel=2, repLevel=0, repeatedAncestorDefLevel=0
+        //
+        // So we bump the incoming levelInfo (which is for the struct) to match
+        // what defRepLevelsToListInfo expects.
+        let adjustedLevelInfo = LevelInfo(
+            defLevel: levelInfo.defLevel + 1,
+            repLevel: levelInfo.repLevel + 1,
+            repeatedAncestorDefLevel: levelInfo.repeatedAncestorDefLevel + 1
+        )
+
+        // Call defRepLevelsToListInfo with offsets=nil (structs don't need offsets)
+        var nilOffsets: [Int32]? = nil
+        try defRepLevelsToListInfo(
+            definitionLevels: definitionLevels,
+            repetitionLevels: repetitionLevels,
+            levelInfo: adjustedLevelInfo,
+            output: &output,
+            offsets: &nilOffsets
+        )
+    }
+
     // MARK: - LevelInfo-based API (Preferred)
 
     /// Reconstructs arrays from flat value sequence and def/rep levels using LevelInfo.

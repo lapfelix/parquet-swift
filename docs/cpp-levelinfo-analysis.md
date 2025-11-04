@@ -698,11 +698,37 @@ Only actual list readers need offset arrays.
 - NULL-first elements counted correctly (e.g., `[[NULL, 1]]`)
 - Array copying eliminated for performance
 
-### Phase 4.3: Port DefRepLevelsToBitmap (2-3 hours)
+### Phase 4.3: Port DefRepLevelsToBitmap ✅ (COMPLETE)
 
-1. Implement as wrapper around `DefRepLevelsToListInfo`
-2. Pass `offsets=nil` and adjust level_info
-3. Use for struct validity when `has_repeated_child = true`
+**Date Completed**: 2025-11-03
+
+1. ✅ Implemented as wrapper around `defRepLevelsToListInfo`
+2. ✅ Passes `offsets=nil` for struct validity (structs don't need offsets)
+3. ✅ Bumps levels to adjust from struct perspective to list perspective
+4. ✅ Added 9 comprehensive tests covering various struct scenarios
+
+**Key Implementation Details**:
+- Wraps `defRepLevelsToListInfo` with adjusted LevelInfo
+- Bumps all three levels: `defLevel += 1`, `repLevel += 1`, `repeatedAncestorDefLevel += 1`
+- Used for struct validity when struct contains repeated children (maps/lists)
+- Passes `offsets=nil` since structs only need validity bitmaps
+
+**Implementation Note - Level Bumping**:
+C++ DefRepLevelsToBitmap only bumps `rep_level` and `def_level`, but NOT `repeated_ancestor_def_level`.
+However, in Swift implementation, we bump all three levels for correct NULL detection:
+- This maintains the relationship: `repeatedAncestorDefLevel = defLevel - 1`
+- Without bumping `repeatedAncestorDefLevel`, NULL structs (def=0) would be incorrectly marked as present
+- All tests pass with this approach, correctly handling NULL structs, NULL lists, and various edge cases
+
+**Test Coverage**:
+- Struct with list child - basic validity
+- Struct with map child - same pattern as list
+- Struct with NULL list inside (list NULL, struct present)
+- Struct with NULL structs (struct itself NULL)
+- Optional struct with list (outer nullable wrapper)
+- Empty input and mismatched level counts
+- Upper bound enforcement
+- Level bumping verification
 
 ### Phase 4.4: Update StructReader (2-3 hours)
 
