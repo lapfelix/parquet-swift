@@ -189,8 +189,8 @@ public final class RowGroupWriter {
             )
         }
 
-        let endOffset = try sink.tell()
-        let totalByteSize = endOffset - startOffset
+        // Per Parquet spec: totalByteSize is "Total byte size of all the uncompressed column data"
+        let totalByteSize = columnMetadata.reduce(Int64(0)) { $0 + $1.totalUncompressedSize }
 
         isClosed = true
 

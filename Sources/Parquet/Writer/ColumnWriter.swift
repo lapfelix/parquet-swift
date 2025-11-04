@@ -65,9 +65,10 @@ public final class Int32ColumnWriter {
             dataPageOffset = result.startOffset
         }
 
-        // Accumulate sizes
-        totalCompressedSize += Int64(result.compressedSize)
-        totalUncompressedSize += Int64(result.uncompressedSize)
+        // Accumulate sizes (including page headers per Parquet spec)
+        let headerLength = result.bytesWritten - result.compressedSize
+        totalCompressedSize += Int64(result.compressedSize + headerLength)
+        totalUncompressedSize += Int64(result.uncompressedSize + headerLength)
 
         // Clear buffer
         valueBuffer.removeAll(keepingCapacity: true)
@@ -87,7 +88,7 @@ public final class Int32ColumnWriter {
 
         return WriterColumnChunkMetadata(
             column: column,
-            fileOffset: columnStartOffset,
+            fileOffset: 0,  // Per spec: 0 when metadata is in footer (deprecated field)
             dataPageOffset: dataPageOffset,
             dictionaryPageOffset: nil,
             numValues: totalValues,
@@ -153,8 +154,10 @@ public final class Int64ColumnWriter {
             dataPageOffset = result.startOffset
         }
 
-        totalCompressedSize += Int64(result.compressedSize)
-        totalUncompressedSize += Int64(result.uncompressedSize)
+        // Accumulate sizes (including page headers per Parquet spec)
+        let headerLength = result.bytesWritten - result.compressedSize
+        totalCompressedSize += Int64(result.compressedSize + headerLength)
+        totalUncompressedSize += Int64(result.uncompressedSize + headerLength)
 
         valueBuffer.removeAll(keepingCapacity: true)
     }
@@ -168,7 +171,7 @@ public final class Int64ColumnWriter {
 
         return WriterColumnChunkMetadata(
             column: column,
-            fileOffset: columnStartOffset,
+            fileOffset: 0,  // Per spec: 0 when metadata is in footer (deprecated field)
             dataPageOffset: dataPageOffset,
             dictionaryPageOffset: nil,
             numValues: totalValues,
@@ -234,8 +237,10 @@ public final class FloatColumnWriter {
             dataPageOffset = result.startOffset
         }
 
-        totalCompressedSize += Int64(result.compressedSize)
-        totalUncompressedSize += Int64(result.uncompressedSize)
+        // Accumulate sizes (including page headers per Parquet spec)
+        let headerLength = result.bytesWritten - result.compressedSize
+        totalCompressedSize += Int64(result.compressedSize + headerLength)
+        totalUncompressedSize += Int64(result.uncompressedSize + headerLength)
 
         valueBuffer.removeAll(keepingCapacity: true)
     }
@@ -249,7 +254,7 @@ public final class FloatColumnWriter {
 
         return WriterColumnChunkMetadata(
             column: column,
-            fileOffset: columnStartOffset,
+            fileOffset: 0,  // Per spec: 0 when metadata is in footer (deprecated field)
             dataPageOffset: dataPageOffset,
             dictionaryPageOffset: nil,
             numValues: totalValues,
@@ -315,8 +320,10 @@ public final class DoubleColumnWriter {
             dataPageOffset = result.startOffset
         }
 
-        totalCompressedSize += Int64(result.compressedSize)
-        totalUncompressedSize += Int64(result.uncompressedSize)
+        // Accumulate sizes (including page headers per Parquet spec)
+        let headerLength = result.bytesWritten - result.compressedSize
+        totalCompressedSize += Int64(result.compressedSize + headerLength)
+        totalUncompressedSize += Int64(result.uncompressedSize + headerLength)
 
         valueBuffer.removeAll(keepingCapacity: true)
     }
@@ -330,7 +337,7 @@ public final class DoubleColumnWriter {
 
         return WriterColumnChunkMetadata(
             column: column,
-            fileOffset: columnStartOffset,
+            fileOffset: 0,  // Per spec: 0 when metadata is in footer (deprecated field)
             dataPageOffset: dataPageOffset,
             dictionaryPageOffset: nil,
             numValues: totalValues,
@@ -396,8 +403,10 @@ public final class StringColumnWriter {
             dataPageOffset = result.startOffset
         }
 
-        totalCompressedSize += Int64(result.compressedSize)
-        totalUncompressedSize += Int64(result.uncompressedSize)
+        // Accumulate sizes (including page headers per Parquet spec)
+        let headerLength = result.bytesWritten - result.compressedSize
+        totalCompressedSize += Int64(result.compressedSize + headerLength)
+        totalUncompressedSize += Int64(result.uncompressedSize + headerLength)
 
         valueBuffer.removeAll(keepingCapacity: true)
     }
@@ -411,7 +420,7 @@ public final class StringColumnWriter {
 
         return WriterColumnChunkMetadata(
             column: column,
-            fileOffset: columnStartOffset,
+            fileOffset: 0,  // Per spec: 0 when metadata is in footer (deprecated field)
             dataPageOffset: dataPageOffset,
             dictionaryPageOffset: nil,
             numValues: totalValues,
