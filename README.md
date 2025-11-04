@@ -250,22 +250,28 @@ swift run ParquetRead example.parquet
 
 ## Roadmap
 
-**Phase 1** (Current): Practical Reader - 10 weeks
-- Goal: Read 80%+ of real Parquet files (flat schema)
-- Deliverable: Alpha release
+**Current Status**: Phase 5 Complete - Production-Ready Reader
 
-**Phase 2**: Full Reader - 6-8 weeks
-- Goal: Complete reader with nested types
-- Deliverable: Beta release
+### Completed Phases ✅
+- **Phase 1**: Practical Reader (PLAIN encoding, basic I/O)
+- **Phase 2**: Full Encoding & Compression (Dictionary, Snappy)
+- **Phase 3**: Nullable & Nested Data (Definition/repetition levels, PyArrow compatibility)
+- **Phase 4**: Structs & Maps (Complex types, LevelInfo infrastructure)
+- **Phase 5**: Lists of Complex Structs (Full nested type parity with Arrow C++)
 
-**Phase 3**: Writer - 8 weeks
-- Goal: Write Parquet files
-- Deliverable: 1.0 release
+### Next Major Milestone
+**Version 1.0** (Target: Q2 2025) - Writer Implementation
+- Core writer with all primitive types
+- Compression (Snappy, GZIP) for writing
+- Dictionary encoding for writing
+- Nested type writing (lists, maps, structs)
+- Swift Concurrency support
 
-**Phase 4**: Advanced Features - 6 weeks
-- Goal: Production-ready optimizations
+### Future Goals
+- **Version 1.1**: Performance optimizations (vectorization, SIMD, async I/O)
+- **Version 1.2+**: Advanced features (Bloom filters, page index, additional codecs)
 
-See [implementation roadmap](docs/implementation-roadmap.md) for details.
+See [roadmap.md](docs/roadmap.md) for comprehensive timeline and priorities.
 
 ## Contributing
 
@@ -299,8 +305,8 @@ Licensed under the Apache License, Version 2.0. See [LICENSE](LICENSE) for detai
 
 ---
 
-**Status**: Alpha - Phase 2 In Progress
-**Current Milestone**: M2.0 - Snappy Compression ✅
-**Next Milestone**: M2.1 - Dictionary Encoding
-**Phase 1**: ✅ Complete (Practical Reader)
-**Phase 2**: 🚧 In Progress (Full Reader - Snappy ✅, Dictionary 🚧, Nulls 🚧, Nested types 🚧)
+**Status**: Beta - Phase 5 Complete
+**Version**: 0.9
+**Reader**: ✅ Production-Ready (All nested types, Dictionary encoding, Snappy compression)
+**Writer**: 🚧 Planned for 1.0 (Q2 2025)
+**Next Milestone**: Phase 10 - Core Writer Implementation
