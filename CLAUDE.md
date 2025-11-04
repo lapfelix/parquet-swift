@@ -4,14 +4,15 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-This is a native Swift implementation of the Apache Parquet columnar storage format, porting the Apache Arrow C++ implementation. The project is in Phase 4 (Full Reader) development.
+This is a native Swift implementation of the Apache Parquet columnar storage format, porting the Apache Arrow C++ implementation. The project is in Phase 5 (Complete Reader) development.
 
-**Current Status**: Phase 4.5 COMPLETE - Structs with complex children (maps, lists) fully supported! ✨
+**Current Status**: Phase 5 COMPLETE - Lists of structs with complex children fully supported! 🎉
 **Phase 1**: Complete (Practical Reader)
 **Phase 2**: Complete (Snappy ✅, Dictionary ✅, Compression ✅)
 **Phase 3**: Complete (Nulls ✅, Arrays ✅, Multi-level lists ✅)
 **Phase 4**: Complete (Structs ✅, Maps ✅, LevelInfo ✅, DefRepLevelsToListInfo ✅, DefRepLevelsToBitmap ✅)
 **Phase 4.5**: Complete (Structs with complex children ✅)
+**Phase 5**: Complete (Lists of structs with complex children ✅, Maps with list values ✅)
 
 ## Build & Test Commands
 

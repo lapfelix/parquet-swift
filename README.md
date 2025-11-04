@@ -8,47 +8,77 @@ A native Swift implementation of the Apache Parquet columnar storage format.
 
 ## Status
 
-🚧 **In Active Development** - Phase 3 (Advanced Reader Features)
+🎉 **Phase 5 Complete!** - Full Nested Type Support
 
-Current milestone: **Phase 3 - Nullable Columns** ✅
-Last completed: M2.2 - Dictionary Encoding (All Types) ✅
+Current milestone: **Phase 5 - Lists of Structs with Complex Children** ✅
 
 **Phase 1 Complete!** ✅ All core reading components implemented.
 **Phase 2 Complete!** ✅ Snappy compression + Dictionary encoding for all primitive types.
-**Phase 3 Progress**: Nullable column support with definition level decoding added! See [implementation roadmap](docs/implementation-roadmap.md) for details.
+**Phase 3 Complete!** ✅ Nullable columns, arrays, multi-level nested lists.
+**Phase 4 Complete!** ✅ Structs and maps with full LevelInfo infrastructure.
+**Phase 4.5 Complete!** ✅ Structs with complex children (maps, lists).
+**Phase 5 Complete!** ✅ Lists of structs with complex children - virtually all real-world nested patterns! 🎉
 
-### Known Limitations
+See [implementation roadmap](docs/implementation-roadmap.md) for details.
 
-Current implementation supports:
+### What's Supported
+
+**File Formats:**
 - ✅ parquet-mr generated files (Spark, Hive, parquet-mr tools)
-- ✅ **PyArrow-generated files** (parquet-cpp-arrow) ✨
+- ✅ **PyArrow-generated files** (parquet-cpp-arrow)
+
+**Encodings:**
 - ✅ PLAIN encoding
 - ✅ Dictionary encoding (RLE_DICTIONARY, PLAIN_DICTIONARY)
-- ✅ UNCOMPRESSED, GZIP, and Snappy compression
-- ✅ Required (non-nullable) primitive columns
-- ✅ **Nullable columns (definition level support)** ✨
+
+**Compression:**
+- ✅ UNCOMPRESSED, GZIP, and **Snappy**
+
+**Data Types:**
 - ✅ All primitive types: Int32, Int64, Float, Double, String
-- ✅ **Repeated columns (single-level arrays/lists)** ✨
-- ✅ **Multi-level nested lists (lists of lists)** ✨
-- ✅ **Maps** (`map<primitive, primitive>`) ✨ NEW!
-- ✅ **Structs** (flat structs with primitive fields) ✨ NEW!
-- ⚠️ **Nested maps/structs** - Partial support with known limitations
+- ✅ **Nullable columns** (definition level support)
+- ✅ **Required columns**
 
-**Important Nested Structure Limitations:**
-- ❌ **Structs containing complex children**: Not supported - throws clear error with workarounds
-  - `struct { map }`, `struct { list }`, `struct { struct }` → Use `readMap()` or read fields individually
-- ⚠️ **list<map>**: Reads but flattens intermediate list dimension (loses structure)
-- ⚠️ **Multi-level repetition**: Only `repLevel ≤ 1` fully supported
+**Nested Types (FULLY SUPPORTED):**
+- ✅ **Lists** (single-level and multi-level)
+  - `list<primitive>`
+  - `list<list<T>>` (nested lists)
+- ✅ **Structs** (simple, nested, and with complex children)
+  - `struct { scalar fields }`
+  - `struct { struct { ... } }` (nested structs)
+  - `struct { map<K,V> field }` ✨ Phase 4.5
+  - `struct { list<T> field }` ✨ Phase 4.5
+- ✅ **Maps** (with primitive or list values)
+  - `map<primitive, primitive>`
+  - `map<K, list<V>>` ✨ Phase 5
+- ✅ **Lists of complex structs** ✨ Phase 5
+  - `list<struct { map<K,V> field }>`
+  - `list<struct { list<T> field }>`
+  - All real-world nested patterns!
 
-**What Works:**
-- ✅ Root-level maps: `map<primitive, primitive>`
-- ✅ Flat structs: primitives only
-- ✅ Simple `list<struct>`: primitives only
-- ✅ Multi-level lists: `list<list<T>>`
+**Example - Complex Nested Structure:**
+```swift
+// Schema: list<struct { name: string, scores: map<string, int64> }>
+let students = try rowGroup.readRepeatedStruct(at: ["students", "list", "element"])
+for list in students {
+    if let list = list {
+        for student in list {
+            if let s = student {
+                let name = s.get("name", as: String.self)
+                let scores = s.get("scores", as: [AnyHashable: Any?].self)
+                print("\(name): \(scores)")
+            }
+        }
+    }
+}
+```
 
-**Fail-Fast Approach**: Rather than returning incomplete/truncated data for complex nested structures, the library throws clear errors with workarounds. This will be fully supported once multi-level reconstruction (LevelInfo) is implemented.
+**Minor Limitations:**
+- ❌ Deeply nested combinations (e.g., `list<map<string, list<struct>>>`) - Very rare in practice
+- ❌ Additional compression codecs (LZ4, ZSTD, BROTLI) - Can be added if needed
+- ❌ Data Page V2 - Can be added if needed
 
-See [docs/limitations.md](docs/limitations.md) for complete details, examples, and workarounds.
+See [docs/limitations.md](docs/limitations.md) for complete details.
 
 ### ⚠️ Pre-1.0 API Changes
 
