@@ -815,32 +815,17 @@ extension RowGroupReader {
         // - struct { list }
         // - struct { struct { map } }  ← nested case requiring recursion
         //
-        // Nested structs with ONLY scalar fields are allowed and can be read.
-        let hasUnsupportedChildren = element.children.contains { child in
+        // If complex children are found, use range-based reconstruction (Phase 5).
+        // Otherwise, use the simpler existing path.
+        let hasComplexChildren = element.children.contains { child in
             hasRepeatedOrComplexDescendants(child)
         }
 
-        if hasUnsupportedChildren {
-            throw RowGroupReaderError.unsupportedType(
-                "Structs in lists containing repeated or map/list fields are not yet supported.\n" +
-                "\n" +
-                "The struct in this list has fields that are:\n" +
-                "- Repeated (e.g., repeated int32 tags)\n" +
-                "- Maps (map<K,V>)\n" +
-                "- Lists (list<T>)\n" +
-                "\n" +
-                "Note: Nested structs with only scalar fields ARE supported.\n" +
-                "\n" +
-                "Workarounds:\n" +
-                "1. For repeated fields: Use the primitive column reader\n" +
-                "   - Access schema: let schema = reader.metadata.schema\n" +
-                "   - Find column: let col = schema.columns.first(where: { $0.path == [..., \"field\"] })!\n" +
-                "   - Read via: rowGroup.int32Column(at: col.index).readAllRepeated()\n" +
-                "2. For maps: Use readMap(at: path)\n" +
-                "3. For lists: Use appropriate list reading method\n" +
-                "\n" +
-                "This limitation will be removed once proper multi-level reconstruction is implemented.\n" +
-                "See docs/limitations.md for details."
+        if hasComplexChildren {
+            // Phase 5: Use range-based reconstruction for structs with complex children
+            return try reconstructRepeatedStructsWithComplexChildren(
+                element: element,
+                path: path
             )
         }
 
@@ -960,6 +945,533 @@ extension RowGroupReader {
         default:
             throw RowGroupReaderError.unsupportedType(
                 "Field \(column.name) has unsupported type \(column.physicalType.name)"
+            )
+        }
+    }
+
+    /// Compute struct boundaries in the flattened data
+    ///
+    /// Scans repetition and definition levels to determine:
+    /// - Which entries belong to which row (list)
+    /// - Which entries belong to which struct within each list
+    /// - Returns ranges for each struct instance
+    ///
+    /// # Example
+    ///
+    /// For `list<struct { map<string, int> attrs }>`:
+    /// ```
+    /// Row 0: [{attrs: {a:1, b:2}}, {attrs: {c:3}}]  # 2 structs
+    /// Row 1: [{attrs: {}}]                           # 1 struct with empty map
+    /// Row 2: []                                       # empty list
+    /// ```
+    ///
+    /// Rep/def levels (from attrs.key column):
+    /// ```
+    /// idx  rep  def  meaning
+    /// 0    0    4    Row 0, struct 0, map entry "a"
+    /// 1    2    4    Row 0, struct 0, map entry "b" (rep=2 continues struct)
+    /// 2    1    4    Row 0, struct 1, map entry "c" (rep=1 new struct)
+    /// 3    0    3    Row 1, struct 0, empty map (rep=0 new row)
+    /// 4    0    1    Row 2, empty list (rep=0 new row, defLevel indicates empty)
+    /// ```
+    ///
+    /// Returns:
+    /// ```
+    /// [
+    ///   [0..<2, 2..<3],     // Row 0: struct at indices 0-2, struct at indices 2-3
+    ///   [3..<4],            // Row 1: struct at indices 3-4
+    ///   []                  // Row 2: empty list
+    /// ]
+    /// ```
+    ///
+    /// - Parameters:
+    ///   - repLevels: Repetition levels from column
+    ///   - defLevels: Definition levels from column
+    ///   - listRepLevel: Repetition level of the list (usually 1)
+    ///   - repeatedAncestorDefLevel: Definition level where list is present
+    /// - Returns: Array of optional arrays of ranges, one per row (nil = NULL list, [] = empty list)
+    private func computeStructRanges(
+        repLevels: [UInt16],
+        defLevels: [UInt16],
+        listRepLevel: Int,
+        repeatedAncestorDefLevel: Int
+    ) -> [[Range<Int>]?] {
+        var result: [[Range<Int>]?] = []
+        var currentRowRanges: [Range<Int>] = []
+        var structStart: Int? = nil
+        var needsAppend = false
+
+        for i in 0..<repLevels.count {
+            let repLevel = Int(repLevels[i])
+            let defLevel = Int(defLevels[i])
+
+            if repLevel == 0 {
+                // New row - finalize previous row's structs
+                if let start = structStart {
+                    currentRowRanges.append(start..<i)
+                    structStart = nil
+                }
+
+                if needsAppend {
+                    result.append(currentRowRanges)
+                    currentRowRanges = []
+                }
+
+                // Check if this row is NULL list or empty list
+                if defLevel < repeatedAncestorDefLevel {
+                    // NULL list - append nil for this row
+                    result.append(nil)
+                    needsAppend = false
+                    structStart = nil
+                    continue
+                } else if defLevel == repeatedAncestorDefLevel {
+                    // Empty list - no structs, but list is present
+                    // We'll append empty array when we hit the next row or end
+                    needsAppend = true
+                    structStart = nil
+                    continue
+                } else {
+                    // Start first struct of new row
+                    needsAppend = true
+                    structStart = i
+                }
+            } else if repLevel == listRepLevel {
+                // New struct in same list
+                if let start = structStart {
+                    currentRowRanges.append(start..<i)
+                }
+                structStart = i
+            }
+            // else: repLevel > listRepLevel means continuation of current struct (e.g., map entries)
+            // Don't create new range, keep accumulating in current struct
+        }
+
+        // Finalize last struct and row
+        if let start = structStart {
+            currentRowRanges.append(start..<repLevels.count)
+        }
+        if needsAppend {
+            result.append(currentRowRanges)
+        }
+
+        return result
+    }
+
+    // MARK: - Range-Based Child Readers (Phase 5)
+
+    /// Read map child for a specific range of indices in the flattened data
+    ///
+    /// This reconstructs a map from a slice of the column data, used when reading
+    /// structs within lists where each struct occupies a specific range of entries.
+    ///
+    /// - Parameters:
+    ///   - childElement: The map schema element
+    ///   - parentPath: Path to the parent struct
+    ///   - range: Range of indices in the flattened column data for this struct
+    /// - Returns: Array of map entries for this struct instance
+    private func readMapChildInRange(
+        childElement: SchemaElement,
+        parentPath: [String],
+        range: Range<Int>
+    ) throws -> [AnyHashable: Any?]? {
+        // Find key and value columns
+        guard let keyColumn = schema.columns.first(where: { column in
+            var current: SchemaElement? = column.element
+            while let node = current {
+                if node === childElement {
+                    return column.name == "key"
+                }
+                current = node.parent
+            }
+            return false
+        }) else {
+            throw RowGroupReaderError.internalError("Could not find key column for map '\(childElement.name)'")
+        }
+
+        guard let valueColumn = schema.columns.first(where: { column in
+            var current: SchemaElement? = column.element
+            while let node = current {
+                if node === childElement {
+                    return column.name == "value"
+                }
+                current = node.parent
+            }
+            return false
+        }) else {
+            throw RowGroupReaderError.internalError("Could not find value column for map '\(childElement.name)'")
+        }
+
+        // Read key column levels and values
+        let (keyValues, keyDefLevels, _) = try readColumnWithLevels(keyColumn)
+
+        // Slice to the range
+        let rangeKeyValues = Array(keyValues[range])
+        let rangeKeyDefLevels = Array(keyDefLevels[range])
+
+        // Check if map is NULL (all entries in range have defLevel below map presence level)
+        let mapPresentLevel = keyColumn.maxDefinitionLevel - 1  // Level where map is present
+        let allBelowMapLevel = rangeKeyDefLevels.allSatisfy { Int($0) < mapPresentLevel }
+
+        if allBelowMapLevel {
+            return nil  // NULL map
+        }
+
+        // Read value column
+        let (valueValues, valueDefLevels, _) = try readColumnWithLevels(valueColumn)
+        let rangeValueValues = Array(valueValues[range])
+        let rangeValueDefLevels = Array(valueDefLevels[range])
+
+        // Build map from key-value pairs
+        var result: [AnyHashable: Any?] = [:]
+
+        for i in 0..<rangeKeyValues.count {
+            // Check if this key-value pair is present
+            if Int(rangeKeyDefLevels[i]) >= mapPresentLevel {
+                if let key = rangeKeyValues[i] as? AnyHashable {
+                    // Value may be NULL even if key is present
+                    let value = Int(rangeValueDefLevels[i]) == valueColumn.maxDefinitionLevel
+                        ? rangeValueValues[i]
+                        : nil
+                    result[key] = value
+                } else if let convertible = rangeKeyValues[i] as? CustomStringConvertible {
+                    result[AnyHashable(convertible.description)] = rangeValueValues[i]
+                } else {
+                    result[AnyHashable(String(describing: rangeKeyValues[i]))] = rangeValueValues[i]
+                }
+            }
+        }
+
+        return result
+    }
+
+    /// Read list child for a specific range of indices
+    private func readListChildInRange(
+        childElement: SchemaElement,
+        parentPath: [String],
+        range: Range<Int>
+    ) throws -> [Any?]? {
+        // Find the leaf column for this list
+        guard let column = schema.columns.first(where: { column in
+            var current: SchemaElement? = column.element
+            while let node = current {
+                if node === childElement {
+                    return true
+                }
+                current = node.parent
+            }
+            return false
+        }) else {
+            throw RowGroupReaderError.internalError("Could not find column for list '\(childElement.name)'")
+        }
+
+        // Read column with levels
+        let (values, defLevels, _) = try readColumnWithLevels(column)
+
+        // Slice to range
+        let rangeValues = Array(values[range])
+        let rangeDefLevels = Array(defLevels[range])
+
+        // Check if list is NULL
+        let listPresentLevel = column.repeatedAncestorDefLevel ?? 0
+        if let firstDefLevel = rangeDefLevels.first, Int(firstDefLevel) < listPresentLevel {
+            return nil  // NULL list
+        }
+
+        // Reconstruct list from slice
+        // For a list child within a struct, all entries in range belong to this list
+        var result: [Any?] = []
+
+        for i in 0..<rangeValues.count {
+            let defLevel = Int(rangeDefLevels[i])
+            if defLevel == column.maxDefinitionLevel {
+                // Value is present
+                result.append(rangeValues[i])
+            } else if defLevel > listPresentLevel {
+                // Element is present but NULL
+                result.append(nil)
+            }
+            // else: defLevel == listPresentLevel means empty list (no elements to add)
+        }
+
+        return result
+    }
+
+    /// Read repeated scalar field for a specific range
+    ///
+    /// For `list<struct { repeated int32 tags }>`, each struct's range contains multiple tag values.
+    /// This reconstructs the array from the range.
+    private func readRepeatedScalarChildInRange(
+        childElement: SchemaElement,
+        parentPath: [String],
+        range: Range<Int>
+    ) throws -> [Any?]? {
+        // Find the column
+        guard let column = schema.columns.first(where: { column in
+            column.element === childElement
+        }) else {
+            throw RowGroupReaderError.internalError("Could not find column for repeated scalar '\(childElement.name)'")
+        }
+
+        // Read column with levels
+        let (values, defLevels, _) = try readColumnWithLevels(column)
+
+        // Slice to range
+        let rangeValues = Array(values[range])
+        let rangeDefLevels = Array(defLevels[range])
+
+        // Check if field is NULL (all entries below field presence level)
+        let fieldPresentLevel = column.maxDefinitionLevel - 1
+        let allBelowFieldLevel = rangeDefLevels.allSatisfy { Int($0) < fieldPresentLevel }
+
+        if allBelowFieldLevel {
+            return nil  // NULL repeated field
+        }
+
+        // Reconstruct array from range
+        var result: [Any?] = []
+
+        for i in 0..<rangeValues.count {
+            let defLevel = Int(rangeDefLevels[i])
+            if defLevel == column.maxDefinitionLevel {
+                // Value is present
+                result.append(rangeValues[i])
+            } else if defLevel >= fieldPresentLevel {
+                // Field is present but this element is NULL
+                result.append(nil)
+            }
+            // else: below fieldPresentLevel means empty repeated field (no elements)
+        }
+
+        return result
+    }
+
+    /// Read scalar field for a specific range
+    private func readScalarFieldInRange(
+        childElement: SchemaElement,
+        parentPath: [String],
+        range: Range<Int>
+    ) throws -> Any? {
+        // Find the column
+        guard let column = schema.columns.first(where: { column in
+            column.element === childElement
+        }) else {
+            throw RowGroupReaderError.internalError("Could not find column for scalar '\(childElement.name)'")
+        }
+
+        // Read column with levels
+        let (values, defLevels, _) = try readColumnWithLevels(column)
+
+        // For a scalar in a struct, the range should contain exactly one entry
+        guard range.count == 1 else {
+            throw RowGroupReaderError.internalError(
+                "Scalar field '\(childElement.name)' has range with \(range.count) entries (expected 1, got \(range.count)). " +
+                "This may indicate a repeated field incorrectly classified as scalar."
+            )
+        }
+
+        let index = range.lowerBound
+        let defLevel = Int(defLevels[index])
+
+        // Check if value is present
+        if defLevel == column.maxDefinitionLevel {
+            return values[index]
+        } else {
+            return nil  // NULL value
+        }
+    }
+
+    /// Reconstruct repeated structs with complex children using range-based approach (Phase 5)
+    ///
+    /// This function handles `list<struct { map/list/repeated }>` by:
+    /// 1. Finding struct boundaries in the flattened data via computeStructRanges()
+    /// 2. For each struct range, reconstructing all children (simple + complex)
+    /// 3. Building StructValue with complete field data
+    ///
+    /// - Parameters:
+    ///   - element: The struct schema element
+    ///   - path: Path to the struct
+    /// - Returns: Array of arrays of structs (nil = NULL list, [] = empty list)
+    private func reconstructRepeatedStructsWithComplexChildren(
+        element: SchemaElement,
+        path: [String]
+    ) throws -> [[StructValue?]?] {
+        // Find a representative column to get levels
+        // Use the first leaf column we can find (preferably from a complex child)
+        guard let representativeColumn = schema.columns.first(where: { column in
+            // Check if this column is a descendant of element
+            var current: SchemaElement? = column.element
+            while let node = current {
+                if node === element {
+                    return true
+                }
+                current = node.parent
+            }
+            return false
+        }) else {
+            throw RowGroupReaderError.internalError(
+                "Could not find any columns for struct at \(path.joined(separator: "."))"
+            )
+        }
+
+        // Read levels from representative column
+        let (_, defLevels, repLevels) = try readColumnWithLevels(representativeColumn)
+
+        guard let repeatedAncestorDefLevel = representativeColumn.repeatedAncestorDefLevel else {
+            throw RowGroupReaderError.internalError(
+                "Cannot compute repeatedAncestorDefLevel for struct at \(path.joined(separator: "."))"
+            )
+        }
+
+        let listRepLevel = 1  // Typically 1 for list<struct>
+
+        // Compute struct ranges
+        let structRanges = computeStructRanges(
+            repLevels: repLevels,
+            defLevels: defLevels,
+            listRepLevel: listRepLevel,
+            repeatedAncestorDefLevel: repeatedAncestorDefLevel
+        )
+
+        // Reconstruct structs for each row
+        var result: [[StructValue?]?] = []
+
+        for rowRanges in structRanges {
+            // Handle NULL list
+            guard let ranges = rowRanges else {
+                result.append(nil)
+                continue
+            }
+
+            // Handle empty list
+            if ranges.isEmpty {
+                result.append([])
+                continue
+            }
+
+            // Reconstruct each struct in this row
+            var rowStructs: [StructValue?] = []
+
+            for range in ranges {
+                // Reconstruct this struct from the range
+                let structValue = try reconstructStructFromRange(
+                    element: element,
+                    path: path,
+                    range: range,
+                    repeatedAncestorDefLevel: repeatedAncestorDefLevel
+                )
+                rowStructs.append(structValue)
+            }
+
+            result.append(rowStructs)
+        }
+
+        return result
+    }
+
+    /// Reconstruct a single struct from a specific range using all child readers
+    ///
+    /// This is the core integration point - it handles ALL children (scalar + complex)
+    /// ensuring complete column coverage as per user feedback.
+    private func reconstructStructFromRange(
+        element: SchemaElement,
+        path: [String],
+        range: Range<Int>,
+        repeatedAncestorDefLevel: Int
+    ) throws -> StructValue? {
+        // Check if struct is NULL by examining the first entry in range
+        // If all children at this position indicate no struct, it's NULL
+        guard !range.isEmpty else {
+            return nil  // Empty range means NULL struct
+        }
+
+        // Build field data by iterating through ALL children
+        var fieldData: [String: Any?] = [:]
+
+        for child in element.children {
+            let fieldValue: Any?
+
+            if child.isMap {
+                // Map child - returns [AnyHashable: Any?]?
+                fieldValue = try readMapChildInRange(
+                    childElement: child,
+                    parentPath: path,
+                    range: range
+                )
+            } else if child.isList {
+                // List child - returns [Any?]?
+                fieldValue = try readListChildInRange(
+                    childElement: child,
+                    parentPath: path,
+                    range: range
+                )
+            } else if child.repetitionType == .repeated {
+                // Repeated scalar - returns [Any?]?
+                fieldValue = try readRepeatedScalarChildInRange(
+                    childElement: child,
+                    parentPath: path,
+                    range: range
+                )
+            } else {
+                // Simple scalar - returns Any?
+                fieldValue = try readScalarFieldInRange(
+                    childElement: child,
+                    parentPath: path,
+                    range: range
+                )
+            }
+
+            fieldData[child.name] = fieldValue
+        }
+
+        // Check if struct is NULL: all fields indicate no presence
+        // This can happen when the struct slot exists but all fields are below struct presence level
+        let allFieldsNull = fieldData.values.allSatisfy { value in
+            // For complex children (maps, lists), nil means NULL
+            // For scalars, nil means NULL
+            value == nil
+        }
+
+        if allFieldsNull && !fieldData.isEmpty {
+            // All fields are NULL - check if this means the struct itself is NULL
+            // or just a struct with all NULL fields
+            // For now, treat as present struct with NULL fields (conservative approach)
+            // TODO: May need refinement based on definition level analysis
+        }
+
+        return StructValue(element: element, fieldData: fieldData)
+    }
+
+    /// Read a column with all levels (helper for range-based readers)
+    private func readColumnWithLevels(_ column: Column) throws -> (values: [Any?], defLevels: [UInt16], repLevels: [UInt16]) {
+        switch column.physicalType {
+        case .int32:
+            let reader = try int32Column(at: column.index)
+            let (values, defLevels, repLevels) = try reader.readAllWithAllLevels()
+            return (values.map { $0 as Any? }, defLevels, repLevels)
+
+        case .int64:
+            let reader = try int64Column(at: column.index)
+            let (values, defLevels, repLevels) = try reader.readAllWithAllLevels()
+            return (values.map { $0 as Any? }, defLevels, repLevels)
+
+        case .float:
+            let reader = try floatColumn(at: column.index)
+            let (values, defLevels, repLevels) = try reader.readAllWithAllLevels()
+            return (values.map { $0 as Any? }, defLevels, repLevels)
+
+        case .double:
+            let reader = try doubleColumn(at: column.index)
+            let (values, defLevels, repLevels) = try reader.readAllWithAllLevels()
+            return (values.map { $0 as Any? }, defLevels, repLevels)
+
+        case .byteArray:
+            let reader = try stringColumn(at: column.index)
+            let (values, defLevels, repLevels) = try reader.readAllWithAllLevels()
+            return (values.map { $0 as Any? }, defLevels, repLevels)
+
+        default:
+            throw RowGroupReaderError.unsupportedType(
+                "Column '\(column.name)' has unsupported type \(column.physicalType.name)"
             )
         }
     }

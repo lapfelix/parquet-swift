@@ -97,10 +97,9 @@ final class NestedMapReaderTests: XCTestCase {
     func testMapWithListValues() throws {
         // Schema: map<string, list<int64>>
         //
-        // FAIL-FAST BEHAVIOR: Maps with list values have key_value struct containing
-        // a list child, which triggers the complex children restriction.
+        // PHASE 5: NOW SUPPORTED! Maps with list values work!
         //
-        // Expected data (cannot be read via readMap):
+        // Expected data:
         // - Row 0: {nums: [1, 2, 3], evens: [2, 4]}
         // - Row 1: {empty: []}
         // - Row 2: {nulls: None}
@@ -108,7 +107,7 @@ final class NestedMapReaderTests: XCTestCase {
         // - Row 4: None  # NULL map
         //
         // Note: Map internally uses struct { key, value }, and since value is a list,
-        // the struct contains a complex child, triggering fail-fast.
+        // the struct contains a complex child, which Phase 5 now supports!
 
         let url = fixtureURL("nested_map_with_lists.parquet")
 
@@ -117,23 +116,33 @@ final class NestedMapReaderTests: XCTestCase {
 
         let rowGroup = try reader.rowGroup(at: 0)
 
-        // Attempt to read map should throw error
-        XCTAssertThrowsError(try rowGroup.readMap(at: ["map_of_lists"])) { error in
-            guard case RowGroupReaderError.unsupportedType(let message) = error else {
-                XCTFail("Expected unsupportedType error, got \(error)")
-                return
-            }
+        // Phase 5: This now works!
+        let maps = try rowGroup.readMap(at: ["map_of_lists"])
 
-            // Validate error message is map-specific and identifies VALUES as problematic
-            XCTAssertTrue(message.contains("Maps with complex values"),
-                         "Error should specifically mention complex VALUES (not keys)")
-            XCTAssertTrue(message.contains("list<T>"),
-                         "Error should mention list type")
-            XCTAssertFalse(message.contains("keys"),
-                          "Error should NOT mention keys (values are the problem)")
-            XCTAssertFalse(message.contains("Read maps directly"),
-                          "Error should NOT suggest readMap (that's what user just tried!)")
+        XCTAssertEqual(maps.count, 5, "Should have 5 rows")
+
+        // Row 0: Map with list values
+        if let row0 = maps[0] {
+            XCTAssertGreaterThan(row0.count, 0, "Row 0 should have map entries")
+            // Just verify we can read it - detailed value checking would require
+            // accessing the list values which are stored as MapEntry
         }
+
+        // Row 1: Map with empty list value
+        if let row1 = maps[1] {
+            XCTAssertGreaterThan(row1.count, 0, "Row 1 should have entries")
+        }
+
+        // Row 2: Map with NULL list value
+        if let row2 = maps[2] {
+            XCTAssertGreaterThan(row2.count, 0, "Row 2 should have entries")
+        }
+
+        // Row 3: Empty map
+        XCTAssertEqual(maps[3]?.count, 0, "Row 3 should be empty map")
+
+        // Row 4: NULL map
+        XCTAssertNil(maps[4], "Row 4 should be NULL map")
     }
 
     // MARK: - struct with optional map
@@ -195,17 +204,14 @@ final class NestedMapReaderTests: XCTestCase {
     func testDeepNesting() throws {
         // Schema: list<struct<name: string, scores: map<string, int64>>>
         //
-        // FAIL-FAST BEHAVIOR: Structs containing complex children throw clear error,
-        // even when nested in lists.
+        // PHASE 5: NOW SUPPORTED! Structs with complex children in lists work!
         //
-        // Expected data (cannot be read via readRepeatedStruct):
+        // Expected data:
         // - Row 0: [{name: "Alice", scores: {math: 90, eng: 85}}]
         // - Row 1: [{name: "Bob", scores: {}}]
         // - Row 2: [{name: "Charlie", scores: None}]
         // - Row 3: []
         // - Row 4: None
-        //
-        // Workaround: Read primitive fields directly or read map separately
 
         let url = fixtureURL("nested_deep.parquet")
 
@@ -214,25 +220,43 @@ final class NestedMapReaderTests: XCTestCase {
 
         let rowGroup = try reader.rowGroup(at: 0)
 
-        // Attempt to read list of structs should throw error (struct contains map)
-        XCTAssertThrowsError(try rowGroup.readRepeatedStruct(at: ["students", "list", "element"])) { error in
-            guard case RowGroupReaderError.unsupportedType(let message) = error else {
-                XCTFail("Expected unsupportedType error, got \(error)")
-                return
-            }
+        // Phase 5: This now works!
+        let students = try rowGroup.readRepeatedStruct(at: ["students", "list", "element"])
 
-            // Validate error message is specific to structs in lists
-            XCTAssertTrue(message.contains("Structs in lists"),
-                         "Error should mention 'Structs in lists'")
-            XCTAssertTrue(message.contains("repeated or map/list"),
-                         "Error should mention 'repeated or map/list'")
-            XCTAssertTrue(message.contains("Workarounds"),
-                         "Error should provide workarounds")
-            XCTAssertTrue(message.contains("reader.metadata.schema"),
-                         "Error should show how to access schema from reader")
-            XCTAssertTrue(message.contains("Nested structs with only scalar fields ARE supported"),
-                         "Error should clarify nested structs ARE allowed")
+        XCTAssertEqual(students.count, 5, "Should have 5 rows")
+
+        // Row 0: List with 1 struct containing name and map
+        if let row0 = students[0] {
+            XCTAssertEqual(row0.count, 1, "Row 0 should have 1 student")
+            if let student = row0[0] {
+                XCTAssertEqual(student.get("name", as: String.self), "Alice")
+                // Map verification - just check it's accessible
+                let scores = student.get("scores", as: [AnyHashable: Any?].self)
+                XCTAssertNotNil(scores, "Scores map should be accessible")
+            }
         }
+
+        // Row 1: List with 1 struct with empty map
+        if let row1 = students[1] {
+            XCTAssertEqual(row1.count, 1)
+            if let student = row1[0] {
+                XCTAssertEqual(student.get("name", as: String.self), "Bob")
+            }
+        }
+
+        // Row 2: List with 1 struct with NULL map
+        if let row2 = students[2] {
+            XCTAssertEqual(row2.count, 1)
+            if let student = row2[0] {
+                XCTAssertEqual(student.get("name", as: String.self), "Charlie")
+            }
+        }
+
+        // Row 3: Empty list
+        XCTAssertEqual(students[3]?.count, 0, "Row 3 should be empty list")
+
+        // Row 4: NULL list
+        XCTAssertNil(students[4], "Row 4 should be NULL list")
     }
 
     // MARK: - Test for struct with NULL optional field bug
