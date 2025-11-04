@@ -62,7 +62,7 @@ public final class RLEEncoder {
     public func encodeOne(_ value: UInt32) {
         guard let run = currentRun else {
             // Start new run
-            currentRun = Run(value: value, count: 1)
+            currentRun = Run(value: value, count: 1, consecutiveCount: 1)
             return
         }
 
@@ -74,11 +74,13 @@ public final class RLEEncoder {
             } else {
                 // End RLE run, start new one
                 flushCurrentRun()
-                currentRun = Run(value: value, count: 1)
+                currentRun = Run(value: value, count: 1, consecutiveCount: 1)
             }
         } else {
             // Currently in bit-packed run
-            if value == run.value && run.count >= minRepeatCount - 1 {
+            let newConsecutiveCount = (value == run.value) ? run.consecutiveCount + 1 : 1
+
+            if value == run.value && newConsecutiveCount >= minRepeatCount {
                 // Found enough repetitions, convert to RLE
                 // Write out bit-packed values before the repeat
                 let bitPackedValues = run.bitPackedValues[..<(run.bitPackedValues.count - (minRepeatCount - 1))]
@@ -87,16 +89,17 @@ public final class RLEEncoder {
                 }
 
                 // Start RLE run with the repeating value
-                currentRun = Run(value: value, count: minRepeatCount, isRLE: true)
+                currentRun = Run(value: value, count: minRepeatCount, consecutiveCount: minRepeatCount, isRLE: true)
             } else if run.bitPackedValues.count >= maxBitPackedRunSize {
                 // Bit-packed run is full, flush it
                 flushCurrentRun()
-                currentRun = Run(value: value, count: 1)
+                currentRun = Run(value: value, count: 1, consecutiveCount: 1)
             } else {
                 // Continue bit-packed run
                 currentRun!.bitPackedValues.append(value)
                 currentRun!.value = value
                 currentRun!.count += 1
+                currentRun!.consecutiveCount = newConsecutiveCount
             }
         }
     }
@@ -201,10 +204,12 @@ public final class RLEEncoder {
         var count: Int
         var isRLE: Bool
         var bitPackedValues: [UInt32]
+        var consecutiveCount: Int  // Track consecutive identical values for RLE detection
 
-        init(value: UInt32, count: Int, isRLE: Bool = false) {
+        init(value: UInt32, count: Int, consecutiveCount: Int = 1, isRLE: Bool = false) {
             self.value = value
             self.count = count
+            self.consecutiveCount = consecutiveCount
             self.isRLE = isRLE
             self.bitPackedValues = isRLE ? [] : [value]
         }

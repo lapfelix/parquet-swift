@@ -504,4 +504,77 @@ final class ParquetFileWriterTests: XCTestCase {
         XCTAssertEqual(readValues.count, testValues.count, "Read count should match written count (no duplicates)")
         XCTAssertEqual(readValues, testValues, "Values should match exactly")
     }
+
+    // MARK: - W4 Tests - Nullable Columns
+
+    func testWriteAndReadNullableStringColumn() throws {
+        // Test writing nullable string column with definition levels
+        let url = temporaryFileURL()
+        defer { cleanupFile(url) }
+
+        // Create schema with OPTIONAL String column
+        let nameColumn = SchemaElement(
+            name: "name",
+            elementType: .primitive(physicalType: .byteArray, logicalType: .string),
+            repetitionType: .optional,  // W4: nullable column
+            fieldId: nil,
+            children: [],
+            parent: nil,
+            depth: 1
+        )
+
+        let root = SchemaElement(
+            name: "schema",
+            elementType: .group(logicalType: nil),
+            repetitionType: .required,
+            fieldId: nil,
+            children: [nameColumn],
+            parent: nil,
+            depth: 0
+        )
+
+        let schema = Schema(root: root)
+
+        // Write data with nulls (disable dictionary for simplicity)
+        var properties = WriterProperties.default
+        properties.dictionaryEnabled = false
+
+        let writer = try ParquetFileWriter(url: url)
+        try writer.setSchema(schema)
+        writer.setProperties(properties)
+
+        let rowGroup = try writer.createRowGroup()
+        let columnWriter = try rowGroup.stringColumnWriter(at: 0)
+
+        // Mix of present and null values
+        let testValues: [String?] = ["Alice", nil, "Charlie", "Diana", nil, nil, "Greg", "Hannah"]
+        try columnWriter.writeOptionalValues(testValues)
+        try rowGroup.finalizeColumn(at: 0)
+
+        try writer.close()
+
+        // Read back and verify nulls preserved
+        let reader = try ParquetFileReader(url: url)
+        defer { try? reader.close() }
+
+        XCTAssertEqual(reader.metadata.numRows, Int64(testValues.count))
+        XCTAssertEqual(reader.metadata.numRowGroups, 1)
+
+        let readRowGroup = try reader.rowGroup(at: 0)
+
+        // Verify column metadata includes RLE encoding for definition levels
+        let columnChunk = readRowGroup.metadata.columns[0]
+        let columnMetadata = try XCTUnwrap(columnChunk.metadata, "Column metadata should be present")
+        XCTAssertTrue(columnMetadata.encodings.contains(Encoding.rle), "Column metadata should include RLE encoding for definition levels")
+        XCTAssertTrue(columnMetadata.encodings.contains(Encoding.plain), "Column metadata should include PLAIN encoding for values")
+
+        let readColumn = try readRowGroup.stringColumn(at: 0)
+        let readValues = try readColumn.readAll()
+
+        // Verify nulls are preserved
+        XCTAssertEqual(readValues.count, testValues.count)
+        for (index, (expected, actual)) in zip(testValues, readValues).enumerated() {
+            XCTAssertEqual(actual, expected, "Value at index \(index) should match (including nulls)")
+        }
+    }
 }

@@ -362,12 +362,14 @@ public final class StringColumnWriter {
     private let properties: WriterProperties
     private let pageWriter: PageWriter
     private var valueBuffer: [String] = []
+    private var definitionLevelBuffer: [UInt16] = []  // W4: Track nulls (0=null, 1=present)
     private var totalValues: Int64 = 0
     private let columnStartOffset: Int64
     private var dataPageOffset: Int64?
     private var dictionaryPageOffset: Int64?
     private var totalCompressedSize: Int64 = 0
     private var totalUncompressedSize: Int64 = 0
+    private let isNullable: Bool
 
     // Dictionary encoding support
     private var dictionaryEncoder: DictionaryEncoder<String>?
@@ -378,6 +380,7 @@ public final class StringColumnWriter {
         self.properties = properties
         self.pageWriter = pageWriter
         self.columnStartOffset = startOffset
+        self.isNullable = !column.isRequired
 
         // Enable dictionary encoding if configured
         if properties.dictionaryEnabled(for: column.name) {
@@ -385,8 +388,12 @@ public final class StringColumnWriter {
         }
     }
 
-    /// Write a batch of String values
+    /// Write a batch of String values (for required columns)
     public func writeValues(_ values: [String]) throws {
+        guard !isNullable else {
+            throw WriterError.invalidState("Column \(column.name) is nullable, use writeOptionalValues()")
+        }
+
         // Feed values to dictionary encoder if enabled
         if let dictEncoder = dictionaryEncoder {
             try dictEncoder.encode(values)
@@ -400,8 +407,42 @@ public final class StringColumnWriter {
         }
     }
 
+    /// Write a batch of optional String values (for nullable columns)
+    /// - Parameter values: Array of optional strings (nil = null)
+    public func writeOptionalValues(_ values: [String?]) throws {
+        guard isNullable else {
+            throw WriterError.invalidState("Column \(column.name) is required, use writeValues()")
+        }
+
+        // Encode definition levels and non-null values
+        for value in values {
+            if let nonNullValue = value {
+                // Present value: def level = 1
+                definitionLevelBuffer.append(1)
+                valueBuffer.append(nonNullValue)
+
+                // Feed to dictionary encoder if enabled
+                if let dictEncoder = dictionaryEncoder {
+                    try dictEncoder.encodeOne(nonNullValue)
+                }
+            } else {
+                // Null value: def level = 0
+                definitionLevelBuffer.append(0)
+                // No value added to valueBuffer
+            }
+        }
+
+        totalValues += Int64(values.count)
+
+        if shouldFlush() {
+            try flush()
+        }
+    }
+
     func flush() throws {
-        guard !valueBuffer.isEmpty else {
+        // For nullable columns, allow flush if we have definition levels (even with no values)
+        // For required columns, need at least one value
+        guard !valueBuffer.isEmpty || (isNullable && !definitionLevelBuffer.isEmpty) else {
             return
         }
 
@@ -410,13 +451,28 @@ public final class StringColumnWriter {
             try writeDictionaryPage(dictEncoder)
         }
 
-        // Encode data page
+        // Encode definition levels if column is nullable
+        let definitionLevelsData: Data?
+        if isNullable {
+            let encoder = LevelEncoder(maxLevel: 1)  // maxLevel=1 for optional columns
+            encoder.encode(definitionLevelBuffer)
+            definitionLevelsData = encoder.flush()
+            usedEncodings.insert(.rle)  // Track RLE encoding used for definition levels
+        } else {
+            definitionLevelsData = nil
+        }
+
+        // Encode data page values
         let (encodedData, encoding) = try encodeDataPage()
+
+        // Number of values = total rows (including nulls for nullable columns)
+        let numValues = Int32(isNullable ? definitionLevelBuffer.count : valueBuffer.count)
 
         let result = try pageWriter.writeDataPage(
             values: encodedData,
-            numValues: Int32(valueBuffer.count),
-            encoding: encoding
+            numValues: numValues,
+            encoding: encoding,
+            definitionLevels: definitionLevelsData
         )
 
         if dataPageOffset == nil {
@@ -436,6 +492,7 @@ public final class StringColumnWriter {
         }
 
         valueBuffer.removeAll(keepingCapacity: true)
+        definitionLevelBuffer.removeAll(keepingCapacity: true)
     }
 
     private func writeDictionaryPage(_ dictEncoder: DictionaryEncoder<String>) throws {

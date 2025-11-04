@@ -36,36 +36,44 @@ final class PageWriter {
     ///   - values: Encoded values data
     ///   - numValues: Number of values in page
     ///   - encoding: Encoding used for values
+    ///   - definitionLevels: Optional definition levels for nullable columns
     /// - Returns: Page write result with offsets and sizes
     /// - Throws: WriterError if write fails
     func writeDataPage(
         values: Data,
         numValues: Int32,
-        encoding: Encoding
+        encoding: Encoding,
+        definitionLevels: Data? = nil
     ) throws -> PageWriteResult {
         // Capture starting offset before writing
         let startOffset = try sink.tell()
 
-        // For W2, we only handle required columns (no definition/repetition levels)
-        let uncompressedSize = values.count
+        // Build page data: [definition levels] + values
+        var pageData = Data()
+        if let defLevels = definitionLevels {
+            pageData.append(defLevels)
+        }
+        pageData.append(values)
+
+        let uncompressedSize = pageData.count
 
         // Compress the page data
-        let (compressedData, compressedSize) = try compressPage(values)
+        let (compressedData, compressedSize) = try compressPage(pageData)
 
         // Build page header
         let dataPageHeader = ThriftDataPageHeader(
             numValues: numValues,
             encoding: encoding.toThrift(),
-            definitionLevelEncoding: .rle,  // Not used for required columns
-            repetitionLevelEncoding: .rle,  // Not used for non-repeated columns
-            statistics: nil  // Statistics not implemented in W2
+            definitionLevelEncoding: .rle,  // Always RLE for definition levels
+            repetitionLevelEncoding: .rle,  // Not used in W4 (no repeated columns yet)
+            statistics: nil  // Statistics not implemented yet
         )
 
         let pageHeader = ThriftPageHeader(
             type: .dataPage,
             uncompressedPageSize: Int32(uncompressedSize),
             compressedPageSize: Int32(compressedSize),
-            crc: nil,  // CRC not implemented in W2
+            crc: nil,  // CRC not implemented
             dataPageHeader: dataPageHeader,
             dictionaryPageHeader: nil,
             dataPageHeaderV2: nil
