@@ -229,6 +229,140 @@ public final class RowGroupWriter {
         return writer
     }
 
+    // MARK: - Map Column Writers (W7 Phase 5)
+
+    /// Get a map<string, int32> column writer
+    /// - Parameter index: Column index (of the key column)
+    /// - Returns: A map writer for string keys and int32 values
+    /// - Throws: WriterError if column is not part of a map structure
+    public func stringInt32MapColumnWriter(at index: Int) throws -> StringInt32MapColumnWriter {
+        let (keyColumn, valueColumn) = try validateMapColumnAccess(
+            at: index,
+            expectedKeyType: .byteArray,
+            expectedValueType: .int32
+        )
+
+        let startOffset = try sink.tell()
+
+        // Map wrapper column for levels computation
+        // The key column's parent is the key_value group, parent's parent is the map wrapper
+        guard let mapElement = keyColumn.element.parent?.parent else {
+            throw WriterError.invalidState("Cannot find map wrapper for column \(index)")
+        }
+
+        // Keys and values have different max definition levels
+        // (keys are required, values are optional)
+        let keyMaxDefinitionLevel = keyColumn.maxDefinitionLevel
+        let valueMaxDefinitionLevel = valueColumn.maxDefinitionLevel
+        let maxRepetitionLevel = keyColumn.maxRepetitionLevel
+
+        // repeatedAncestorDefLevel: def level when map is present but empty
+        let repeatedAncestorDefLevel = keyColumn.repeatedAncestorDefLevel ?? 0
+
+        // nullMapDefLevel: def level when map is NULL (one less than empty map)
+        let nullMapDefLevel = repeatedAncestorDefLevel - 1
+
+        let writer = StringInt32MapColumnWriter(
+            column: keyColumn,
+            properties: properties,
+            sink: sink,
+            startOffset: startOffset,
+            keyMaxDefinitionLevel: keyMaxDefinitionLevel,
+            valueMaxDefinitionLevel: valueMaxDefinitionLevel,
+            maxRepetitionLevel: maxRepetitionLevel,
+            repeatedAncestorDefLevel: repeatedAncestorDefLevel,
+            nullMapDefLevel: nullMapDefLevel,
+            keyColumn: keyColumn,
+            valueColumn: valueColumn
+        )
+
+        // Store writer for both key and value column indices
+        columnWriters[index] = writer
+        columnWriters[index + 1] = writer
+
+        return writer
+    }
+
+    /// Get a map<string, int64> column writer
+    /// - Parameter index: Column index (of the key column)
+    /// - Returns: A map writer for string keys and int64 values
+    /// - Throws: WriterError if column is not part of a map structure
+    public func stringInt64MapColumnWriter(at index: Int) throws -> StringInt64MapColumnWriter {
+        let (keyColumn, valueColumn) = try validateMapColumnAccess(
+            at: index,
+            expectedKeyType: .byteArray,
+            expectedValueType: .int64
+        )
+
+        let startOffset = try sink.tell()
+
+        // Keys and values have different max definition levels
+        let keyMaxDefinitionLevel = keyColumn.maxDefinitionLevel
+        let valueMaxDefinitionLevel = valueColumn.maxDefinitionLevel
+        let maxRepetitionLevel = keyColumn.maxRepetitionLevel
+        let repeatedAncestorDefLevel = keyColumn.repeatedAncestorDefLevel ?? 0
+        let nullMapDefLevel = repeatedAncestorDefLevel - 1
+
+        let writer = StringInt64MapColumnWriter(
+            column: keyColumn,
+            properties: properties,
+            sink: sink,
+            startOffset: startOffset,
+            keyMaxDefinitionLevel: keyMaxDefinitionLevel,
+            valueMaxDefinitionLevel: valueMaxDefinitionLevel,
+            maxRepetitionLevel: maxRepetitionLevel,
+            repeatedAncestorDefLevel: repeatedAncestorDefLevel,
+            nullMapDefLevel: nullMapDefLevel,
+            keyColumn: keyColumn,
+            valueColumn: valueColumn
+        )
+
+        columnWriters[index] = writer
+        columnWriters[index + 1] = writer
+
+        return writer
+    }
+
+    /// Get a map<string, string> column writer
+    /// - Parameter index: Column index (of the key column)
+    /// - Returns: A map writer for string keys and string values
+    /// - Throws: WriterError if column is not part of a map structure
+    public func stringStringMapColumnWriter(at index: Int) throws -> StringStringMapColumnWriter {
+        let (keyColumn, valueColumn) = try validateMapColumnAccess(
+            at: index,
+            expectedKeyType: .byteArray,
+            expectedValueType: .byteArray
+        )
+
+        let startOffset = try sink.tell()
+
+        // Keys and values have different max definition levels
+        let keyMaxDefinitionLevel = keyColumn.maxDefinitionLevel
+        let valueMaxDefinitionLevel = valueColumn.maxDefinitionLevel
+        let maxRepetitionLevel = keyColumn.maxRepetitionLevel
+        let repeatedAncestorDefLevel = keyColumn.repeatedAncestorDefLevel ?? 0
+        let nullMapDefLevel = repeatedAncestorDefLevel - 1
+
+        let writer = StringStringMapColumnWriter(
+            column: keyColumn,
+            properties: properties,
+            sink: sink,
+            startOffset: startOffset,
+            keyMaxDefinitionLevel: keyMaxDefinitionLevel,
+            valueMaxDefinitionLevel: valueMaxDefinitionLevel,
+            maxRepetitionLevel: maxRepetitionLevel,
+            repeatedAncestorDefLevel: repeatedAncestorDefLevel,
+            nullMapDefLevel: nullMapDefLevel,
+            keyColumn: keyColumn,
+            valueColumn: valueColumn
+        )
+
+        columnWriters[index] = writer
+        columnWriters[index + 1] = writer
+
+        return writer
+    }
+
     /// Finalize a column writer and store its metadata
     /// - Parameter index: Column index to finalize
     /// - Throws: WriterError if column not found or finalization fails
@@ -237,6 +371,19 @@ public final class RowGroupWriter {
             throw WriterError.invalidState("No writer found for column \(index)")
         }
 
+        // Check if this is a map writer (spans 2 columns)
+        if let mapWriter = writerAny as? StringInt32MapColumnWriter {
+            try finalizeMapWriter(mapWriter, startIndex: index)
+            return
+        } else if let mapWriter = writerAny as? StringInt64MapColumnWriter {
+            try finalizeMapWriter(mapWriter, startIndex: index)
+            return
+        } else if let mapWriter = writerAny as? StringStringMapColumnWriter {
+            try finalizeMapWriter(mapWriter, startIndex: index)
+            return
+        }
+
+        // Handle primitive and list writers
         let metadata: WriterColumnChunkMetadata
         let columnRowCount: Int64
 
@@ -282,6 +429,54 @@ public final class RowGroupWriter {
 
         columnMetadata.append(metadata)
         currentColumn += 1
+    }
+
+    /// Finalize a map writer (which spans 2 columns: key and value)
+    private func finalizeMapWriter<T>(
+        _ mapWriter: T,
+        startIndex: Int
+    ) throws where T: AnyObject {
+        // Extract metadata based on map writer type
+        let keyMetadata: WriterColumnChunkMetadata
+        let valueMetadata: WriterColumnChunkMetadata
+        let rowCount: Int64
+
+        if let writer = mapWriter as? StringInt32MapColumnWriter {
+            let metadata = try writer.close()
+            keyMetadata = metadata.key
+            valueMetadata = metadata.value
+            rowCount = writer.numRows
+        } else if let writer = mapWriter as? StringInt64MapColumnWriter {
+            let metadata = try writer.close()
+            keyMetadata = metadata.key
+            valueMetadata = metadata.value
+            rowCount = writer.numRows
+        } else if let writer = mapWriter as? StringStringMapColumnWriter {
+            let metadata = try writer.close()
+            keyMetadata = metadata.key
+            valueMetadata = metadata.value
+            rowCount = writer.numRows
+        } else {
+            throw WriterError.invalidState("Unknown map writer type")
+        }
+
+        // Row count validation
+        if currentColumn == 0 {
+            numRows = rowCount
+        } else {
+            guard numRows == rowCount else {
+                throw WriterError.invalidState(
+                    "Map columns \(startIndex)-\(startIndex + 1) have \(rowCount) rows, expected \(numRows)"
+                )
+            }
+        }
+
+        // Add metadata for both key and value columns
+        columnMetadata.append(keyMetadata)
+        columnMetadata.append(valueMetadata)
+
+        // Increment by 2 since map spans 2 columns
+        currentColumn += 2
     }
 
     // MARK: - Row Group Finalization
@@ -382,5 +577,81 @@ public final class RowGroupWriter {
                 actual: "\(column.physicalType)"
             )
         }
+    }
+
+    private func validateMapColumnAccess(
+        at index: Int,
+        expectedKeyType: PhysicalType,
+        expectedValueType: PhysicalType
+    ) throws -> (keyColumn: Column, valueColumn: Column) {
+        guard !isClosed else {
+            throw WriterError.invalidState("Row group is closed")
+        }
+
+        guard index < schema.columnCount - 1 else {
+            throw WriterError.columnIndexOutOfBounds(index)
+        }
+
+        guard index == currentColumn else {
+            throw WriterError.invalidState(
+                "Columns must be written sequentially. Expected column \(currentColumn), got \(index)"
+            )
+        }
+
+        guard !columnWriters.keys.contains(index) else {
+            throw WriterError.columnAlreadyWritten(index)
+        }
+
+        let keyColumn = schema.columns[index]
+        let valueColumn = schema.columns[index + 1]
+
+        // Validate this is a map structure:
+        // - Key column's parent should be a repeated group (key_value)
+        // - Key column's grandparent should have MAP logical type
+        guard let kvGroup = keyColumn.element.parent,
+              kvGroup.repetitionType == .repeated,
+              let mapWrapper = kvGroup.parent,
+              mapWrapper.logicalType == .map else {
+            throw WriterError.invalidState(
+                "Column \(index) is not part of a map structure (use primitive column writer instead)"
+            )
+        }
+
+        // Validate key and value are siblings in the key_value group
+        guard valueColumn.element.parent === kvGroup else {
+            throw WriterError.invalidState(
+                "Columns \(index) and \(index + 1) are not key-value siblings in a map"
+            )
+        }
+
+        // Validate key and value names
+        guard keyColumn.name == "key" else {
+            throw WriterError.invalidState(
+                "Column \(index) is not named 'key' (found '\(keyColumn.name)')"
+            )
+        }
+
+        guard valueColumn.name == "value" else {
+            throw WriterError.invalidState(
+                "Column \(index + 1) is not named 'value' (found '\(valueColumn.name)')"
+            )
+        }
+
+        // Validate types
+        guard keyColumn.physicalType == expectedKeyType else {
+            throw WriterError.incompatibleType(
+                expected: expectedKeyType,
+                actual: "\(keyColumn.physicalType)"
+            )
+        }
+
+        guard valueColumn.physicalType == expectedValueType else {
+            throw WriterError.incompatibleType(
+                expected: expectedValueType,
+                actual: "\(valueColumn.physicalType)"
+            )
+        }
+
+        return (keyColumn, valueColumn)
     }
 }

@@ -4,15 +4,25 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-This is a native Swift implementation of the Apache Parquet columnar storage format, porting the Apache Arrow C++ implementation. The project is in Phase 5 (Complete Reader) development.
+This is a native Swift implementation of the Apache Parquet columnar storage format, porting the Apache Arrow C++ implementation.
 
-**Current Status**: Phase 5 COMPLETE - Lists of structs with complex children fully supported! 🎉
+**Current Status**: W7 COMPLETE - Full Parquet Writer Implementation! 🎉
+
+### Reader Implementation (R1-R5)
 **Phase 1**: Complete (Practical Reader)
 **Phase 2**: Complete (Snappy ✅, Dictionary ✅, Compression ✅)
 **Phase 3**: Complete (Nulls ✅, Arrays ✅, Multi-level lists ✅)
 **Phase 4**: Complete (Structs ✅, Maps ✅, LevelInfo ✅, DefRepLevelsToListInfo ✅, DefRepLevelsToBitmap ✅)
 **Phase 4.5**: Complete (Structs with complex children ✅)
 **Phase 5**: Complete (Lists of structs with complex children ✅, Maps with list values ✅)
+
+### Writer Implementation (W7)
+**Phase 2**: Complete (Primitive column writers ✅, Compression ✅, Statistics ✅)
+**Phase 3**: Complete (Optional/required columns ✅, Definition levels ✅)
+**Phase 4**: Complete (List writers ✅, Multi-level nested lists ✅, Repetition levels ✅)
+**Phase 5**: Complete (Map writers ✅, Separate def levels for keys/values ✅)
+**PyArrow Validation**: ✅ ALL PASS (lists, nested lists, maps, structs)
+**Test Suite**: 436 tests passing, 0 failures
 
 ## Build & Test Commands
 
@@ -56,10 +66,11 @@ Sources/Parquet/
 ├── Thrift/            # Thrift Compact Binary Protocol parser
 ├── Schema/            # Schema representation (tree structure)
 ├── Metadata/          # FileMetadata wrapper (Swift API over Thrift)
-├── IO/                # I/O layer (RandomAccessFile, BufferedReader, ParquetFileReader)
-├── Encoding/          # Encoders/Decoders (PLAIN only in Phase 1)
+├── IO/                # I/O layer (RandomAccessFile, BufferedReader, OutputSink)
+├── Encoding/          # Encoders/Decoders (PLAIN, RLE_DICTIONARY)
 ├── Compression/       # Compression codecs (UNCOMPRESSED, GZIP, Snappy)
-└── Reader/            # Column readers (PageReader, RowGroupReader, type-specific readers)
+├── Reader/            # Column readers (PageReader, RowGroupReader, type-specific readers)
+└── Writer/            # Column writers (PageWriter, RowGroupWriter, type-specific writers)
 ```
 
 ### Key Components
@@ -67,29 +78,39 @@ Sources/Parquet/
 #### Thrift Layer
 - `ThriftReader`: Compact Binary Protocol deserializer
 - Parses Parquet file footer metadata
-- **Known Issue**: Cannot parse PyArrow-generated files (metadata format incompatibility)
-- **Works with**: parquet-mr files (Spark, Hive, parquet-mr tools)
+- `ThriftWriter`: Compact Binary Protocol serializer
+- Writes file metadata to footer
 
 #### I/O Layer
-- `RandomAccessFile`: Abstract file interface (FileRandomAccessFile, MemoryRandomAccessFile)
-- `BufferedReader`: Efficient buffered I/O with seek
-- `ParquetFileReader`: Main entry point - manages file lifecycle and metadata
+- **Reading**: `RandomAccessFile`, `BufferedReader`, `ParquetFileReader`
+- **Writing**: `OutputSink`, `FileOutputSink`, `ParquetFileWriter`
+- Manages file lifecycle, metadata, and row group access
 
 #### Schema Layer
 - `Schema`: Tree structure representing Parquet schema
 - `SchemaElement`: Individual schema nodes (groups and primitives)
 - `SchemaBuilder`: Reconstructs schema tree from flat Thrift list
+- `Column`: Flattened view of schema with level information
 
 #### Reading API
 - `ParquetFileReader`: Opens file, reads metadata, provides row group access
 - `RowGroupReader`: Accesses columns within a row group
-- Type-specific readers: `Int32ColumnReader`, `Int64ColumnReader`, `FloatColumnReader`, `DoubleColumnReader`, `StringColumnReader`
+- Primitive readers: `Int32ColumnReader`, `StringColumnReader`, etc.
+- Nested readers: `readList()`, `readMap()`, `readStruct()`
 - **Important**: Use concrete readers, not generic `ColumnReader<T>` (Swift type system limitation)
 
-#### Page Reading
-- `PageReader`: Reads pages from column chunk, handles decompression
-- `DataPage`: Represents data page (V1 only in Phase 1)
-- Decompression integrated at page level
+#### Writing API
+- `ParquetFileWriter`: Creates file, writes schema and metadata
+- `RowGroupWriter`: Sequential column writer access
+- Primitive writers: `Int32ColumnWriter`, `StringColumnWriter`, etc.
+- List writers: `Int32ListColumnWriter`, `StringListColumnWriter`, etc.
+- Map writers: `StringInt32MapColumnWriter`, `StringInt64MapColumnWriter`, `StringStringMapColumnWriter`
+- Struct writing: Manual field extraction pattern (documented in `StructWritingPatternTests`)
+
+#### Page Layer
+- **Reading**: `PageReader` (reads pages, handles decompression)
+- **Writing**: `PageWriter` (writes pages, handles compression, level encoding)
+- Data Page V1 support (definition/repetition levels, compression, statistics)
 
 ### Type System Quirks
 
@@ -100,29 +121,47 @@ Sources/Parquet/
 
 **Reason**: PlainDecoder uses type-specific extensions (`extension PlainDecoder where T == Int32`), which prevents generic ColumnReader from calling the correct decoder methods.
 
-## Current Limitations (Phase 1/2)
+## Feature Support
 
-### Supported
-- ✅ parquet-mr generated files (Spark, Hive)
-- ✅ PLAIN encoding only
+### Reader (R1-R5) - COMPLETE
+- ✅ PLAIN and RLE_DICTIONARY encoding
 - ✅ UNCOMPRESSED, GZIP, Snappy compression
-- ✅ Required (non-nullable) primitive columns
-- ✅ Types: Int32, Int64, Float, Double, String (UTF-8)
+- ✅ Optional/required columns with definition levels
+- ✅ Nested types: lists, maps, structs (multi-level nesting)
+- ✅ Primitive types: Int32, Int64, Float, Double, String (UTF-8), Boolean
+- ✅ Complex nesting: lists of structs, maps with list values, struct fields with arrays
+- ✅ PyArrow-generated files (with RLE_DICTIONARY encoding)
 
-### NOT Supported (Blockers)
-- ❌ PyArrow-generated files (Thrift metadata parsing fails)
-- ❌ Dictionary encoding (most common for strings, low-cardinality columns)
-- ❌ Nullable columns (definition levels not implemented)
-- ❌ Nested types (lists, maps, structs)
-- ❌ Data Page V2
+### Writer (W7) - COMPLETE
+- ✅ Primitive column writers: Int32, Int64, Float, Double, String, Boolean
+- ✅ PLAIN encoding
+- ✅ UNCOMPRESSED, GZIP, Snappy compression
+- ✅ Optional/required columns with definition levels
+- ✅ List writers (single and multi-level nested lists)
+- ✅ Map writers (map<string, int32/int64/string>)
+- ✅ Repetition levels for nested structures
+- ✅ Statistics generation (min/max/null count)
+- ✅ Separate definition levels for map keys/values
+- ✅ **PyArrow validation: ALL PASS** (cross-implementation compatibility confirmed)
+
+### Struct Writing Pattern
+- ✅ Manual field extraction (write struct fields as independent columns)
+- ✅ Round-trip compatibility with struct reader
+- ✅ Documented pattern in `StructWritingPatternTests.swift`
+
+### Known Limitations
+- ❌ Dictionary encoding writer (PLAIN only)
+- ❌ Data Page V2 (V1 only)
 - ❌ Other compression: LZ4, ZSTD, BROTLI, LZO
+- ❌ Bloom filters
+- ❌ Column encryption
 
-See `docs/limitations.md` for complete details.
+## API Usage Patterns
 
-## API Usage Pattern
+### Reading Files
 
 ```swift
-// Instance-based API (recommended)
+// Open a Parquet file
 let reader = try ParquetFileReader(url: fileURL)
 defer { try? reader.close() }
 
@@ -132,47 +171,80 @@ print("Columns: \(reader.metadata.schema.columnCount)")
 // Access row group
 let rowGroup = try reader.rowGroup(at: 0)
 
-// Read typed columns using concrete readers
+// Read primitive columns
 let idColumn = try rowGroup.int32Column(at: 0)
 let ids = try idColumn.readAll()  // [Int32]
 
-let nameColumn = try rowGroup.stringColumn(at: 4)
-let names = try nameColumn.readAll()  // [String]
+let nameColumn = try rowGroup.stringColumn(at: 1)
+let names = try nameColumn.readAll()  // [String?]
 
-// For large columns, batch reading
-let batch = try idColumn.readBatch(count: 1000)
+// Read nested columns (lists, maps, structs)
+let tags = try rowGroup.readList(at: ["tags"])  // [Any?]
+let attributes = try rowGroup.readMap(at: ["attributes"])  // [[String: Any]?]
+let address = try rowGroup.readStruct(at: ["address"])  // [[String: Any]?]
+```
+
+### Writing Files
+
+```swift
+// Create schema (example: simple struct with two fields)
+let schema = try SchemaBuilder.buildSimpleSchema(
+    fields: [
+        ("id", .int32, .required),
+        ("name", .string, .optional)
+    ]
+)
+
+// Create writer
+let writer = try ParquetFileWriter(url: outputURL)
+try writer.setSchema(schema)
+writer.setProperties(.default)
+
+// Write data
+let rowGroup = try writer.createRowGroup()
+
+// Write primitive columns
+let idWriter = try rowGroup.int32ColumnWriter(at: 0)
+try idWriter.writeValues([1, 2, 3])
+try rowGroup.finalizeColumn(at: 0)
+
+let nameWriter = try rowGroup.stringColumnWriter(at: 1)
+try nameWriter.writeOptionalValues(["Alice", "Bob", nil])
+try rowGroup.finalizeColumn(at: 1)
+
+// Write lists
+let listWriter = try rowGroup.int32ListColumnWriter(at: 2)
+try listWriter.writeValues([[1, 2], nil, [3, 4, 5]])
+try rowGroup.finalizeColumn(at: 2)
+
+// Write maps
+let mapWriter = try rowGroup.stringInt32MapColumnWriter(at: 3)
+try mapWriter.writeMaps([["a": 1, "b": 2], nil, [:]])
+try rowGroup.finalizeColumn(at: 3)
+
+// Close writer
+try writer.close()
 ```
 
 ## Testing Strategy
 
-### Test Files
-- Test fixtures in `Tests/ParquetTests/Fixtures/`
-- **Important**: Most Apache Parquet test files use dictionary encoding or Snappy
-- Phase 1 fixtures must be PLAIN encoding + UNCOMPRESSED/GZIP
-- PyArrow-generated fixtures don't work (metadata incompatibility)
-
-### Test Organization
+### Test Organization (436 tests total)
 - `Core/`: Enum and basic type tests
 - `Thrift/`: Thrift protocol parser tests
 - `Schema/`: Schema building tests
 - `IO/`: File I/O and buffering tests
-- `Encoding/`: PLAIN decoder tests
-- `Compression/`: Codec tests
-- `Reader/`: Column reader integration tests
-- `Integration/`: End-to-end file reading tests
+- `Encoding/`: PLAIN and RLE_DICTIONARY decoder tests
+- `Compression/`: Codec tests (UNCOMPRESSED, GZIP, Snappy)
+- `Reader/`: Column reader integration tests (primitives, lists, maps, structs)
+- `Writer/`: Column writer integration tests (primitives, lists, maps)
+- `Integration/`: End-to-end reading and writing tests
+- `PyArrowValidationTests`: Cross-implementation validation with PyArrow
 
-## Phase 2 Roadmap
-
-1. **M2.0**: ✅ Snappy compression (COMPLETE)
-2. **M2.1**: 🚧 Dictionary encoding (PLAIN_DICTIONARY + RLE_DICTIONARY)
-3. **M2.2**: 🚧 Definition levels (nullable columns)
-4. **M2.3**: 🚧 Nested types (lists, maps, structs)
-
-Still deferred:
-- PyArrow compatibility (requires Thrift parser investigation)
-- Delta encodings
-- RLE encoding for booleans
-- Repetition levels (nested structures)
+### Test Files
+- Test fixtures in `Tests/ParquetTests/Fixtures/`
+- Includes PyArrow-generated files with RLE_DICTIONARY encoding
+- Writer-generated files validated against PyArrow (lists, nested lists, maps, structs)
+- Python validation script: `Tests/ParquetTests/Fixtures/validate_with_pyarrow.py`
 
 ## Reference Documentation
 
@@ -194,11 +266,11 @@ Key docs in `docs/`:
 5. Handle errors explicitly - Parquet files can be malformed
 
 ### When Debugging
-- Check if file is PyArrow-generated (won't work currently)
-- Verify encoding is PLAIN (only supported encoding)
-- Verify compression is UNCOMPRESSED, GZIP, or Snappy
-- Check column is required (no nulls support yet)
-- Look at Thrift metadata parsing if metadata read fails
+- Check encoding (PLAIN and RLE_DICTIONARY supported)
+- Verify compression (UNCOMPRESSED, GZIP, Snappy supported)
+- For writer issues, check column sequencing (columns must be written in order)
+- For map issues, remember keys and values have separate definition levels
+- Use PyArrow validation script for cross-implementation compatibility checks
 
 ### Code Style
 - Use explicit error types (not generic Error)
