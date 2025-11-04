@@ -45,6 +45,63 @@ struct ArrayReconstructor {
         case populated      // def > ancestorDef → list with elements/nulls
     }
 
+    // MARK: - LevelInfo-based API (Preferred)
+
+    /// Reconstructs arrays from flat value sequence and def/rep levels using LevelInfo.
+    ///
+    /// **Preferred API**: Use this method for new code. It matches the Arrow C++ approach.
+    ///
+    /// This method validates that LevelInfo parameters match the actual level data and
+    /// enforces single-source-of-truth for level thresholds.
+    ///
+    /// - Parameters:
+    ///   - values: Non-null payloads only (no Optional wrapper)
+    ///   - definitionLevels: One per logical value (including nulls and empty lists)
+    ///   - repetitionLevels: One per logical value (including nulls and empty lists)
+    ///   - levelInfo: Level metadata for reconstruction (MUST match the column's actual levels)
+    ///
+    /// - Returns: Array of arrays where:
+    ///   - Outer nil represents NULL list (list not present)
+    ///   - Inner nil represents NULL element (element not present)
+    ///   - Empty array [] represents empty list (list present, zero elements)
+    ///
+    /// - Throws: `ColumnReaderError` if levels are invalid or don't match levelInfo
+    static func reconstructArrays<T>(
+        values: [T],
+        definitionLevels: [UInt16],
+        repetitionLevels: [UInt16],
+        levelInfo: LevelInfo
+    ) throws -> [[T?]?] {
+        // Validate levelInfo consistency with actual level data
+        // This catches mismatches early rather than silently using wrong thresholds
+        let maxDefInData = definitionLevels.max() ?? 0
+        let maxRepInData = repetitionLevels.max() ?? 0
+
+        if Int(maxDefInData) > levelInfo.defLevel {
+            throw ColumnReaderError.internalError(
+                "Definition levels contain \(maxDefInData) which exceeds levelInfo.defLevel=\(levelInfo.defLevel)"
+            )
+        }
+
+        if Int(maxRepInData) > levelInfo.repLevel {
+            throw ColumnReaderError.internalError(
+                "Repetition levels contain \(maxRepInData) which exceeds levelInfo.repLevel=\(levelInfo.repLevel)"
+            )
+        }
+
+        // Use levelInfo as single source of truth for thresholds
+        return try reconstructArrays(
+            values: values,
+            definitionLevels: definitionLevels,
+            repetitionLevels: repetitionLevels,
+            maxDefinitionLevel: levelInfo.defLevel,
+            maxRepetitionLevel: levelInfo.repLevel,
+            repeatedAncestorDefLevel: levelInfo.repeatedAncestorDefLevel
+        )
+    }
+
+    // MARK: - Legacy API (Backwards Compatibility)
+
     /// Reconstructs arrays from flat value sequence and def/rep levels.
     ///
     /// - Parameters:
