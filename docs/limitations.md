@@ -1,8 +1,9 @@
-# Known Limitations - Phase 3
+# Known Limitations - Phase 4
 
 This document tracks known limitations and compatibility issues in the current implementation.
 
 **Latest Updates**:
+- ✅ **Structs with complex children fully supported (Phase 4.5)** ✨ NEW!
 - ✅ Array reconstruction for repeated columns (Phase 3)
 - ✅ PyArrow compatibility fixed (Phase 3)
 - ✅ Nullable columns fully supported (Phase 3)
@@ -120,28 +121,36 @@ This document tracks known limitations and compatibility issues in the current i
 
 **Impact**: Most real Parquet files with nullable columns are now readable!
 
-### Nested Types (PARTIALLY IMPLEMENTED)
+### Nested Types (MOSTLY IMPLEMENTED)
 
-**Status**: 🚧 Partially implemented
+**Status**: ✅ Mostly implemented (Phase 4.5)
 
 **Supported**:
 - ✅ Single-level repeated columns (maxRepetitionLevel = 1)
-- ✅ **Multi-level nested lists** (maxRepetitionLevel > 1) ✨ NEW!
+- ✅ **Multi-level nested lists** (maxRepetitionLevel > 1)
   - ✅ Lists of lists (e.g., `[[[1, 2], [3]], [[4]]]`)
   - ✅ Distinguishes NULL lists vs EMPTY lists
   - ✅ Handles all edge cases (null inner/outer lists, empty inner/outer lists)
   - ✅ `readAllNested()` API returns nested arrays
+- ✅ **Structs** (Phase 4) ✨
+  - ✅ Simple structs (scalar fields only)
+  - ✅ Nested structs (struct in struct)
+  - ✅ Nullable structs and nullable fields
+  - ✅ **Structs with complex children (maps, lists)** ✨ NEW in Phase 4.5!
+- ✅ **Maps** (Phase 4)
+  - ✅ Root-level maps: `map<primitive, primitive>`
+  - ✅ Maps with NULL keys or values
+  - ✅ Empty maps vs NULL maps
 
 **Missing Support**:
-- ❌ Nested structs
-- ❌ Maps
-- ❌ Lists of structs
+- ❌ Lists of structs with complex children (workaround available)
+- ❌ Deeply nested combinations (e.g., `list<map<string, list<struct>>>`)
 
-**Impact**: Can read primitive columns, single-level arrays, and multi-level nested lists. Cannot read maps or structs yet.
+**Impact**: Can read most common nested structures including structs with maps/lists!
 
 ## Summary
 
-Phase 3 implementation supports:
+Phase 4 implementation supports:
 - ✅ parquet-mr generated files (Spark, Hive, parquet-mr tools)
 - ✅ **PyArrow-generated files** (parquet-cpp-arrow) ✨
 - ✅ PLAIN encoding
@@ -151,7 +160,10 @@ Phase 3 implementation supports:
 - ✅ **Required (non-nullable) columns** ✨
 - ✅ **Nullable columns (definition level support)** ✨
 - ✅ **Repeated columns (single-level arrays/lists)** ✨
-- ✅ **Multi-level nested lists (lists of lists)** ✨ NEW!
+- ✅ **Multi-level nested lists (lists of lists)** ✨
+- ✅ **Structs** (simple, nested, and with complex children) ✨ NEW!
+- ✅ **Maps** (root-level, nullable keys/values) ✨ NEW!
+- ✅ **Structs with maps/lists** ✨ NEW in Phase 4.5!
 
 **Major Improvements**:
 - ✅ **PyArrow compatibility** - Python ecosystem files now readable! (pandas, PyArrow, Dask) 🎉
@@ -159,6 +171,8 @@ Phase 3 implementation supports:
 - ✅ Dictionary encoding for ALL primitive types (~90% of string/enum columns!)
 - ✅ **Nullable column support** - can read NULL values in optional columns! (~90% of schemas!)
 - ✅ **Repeated column support** - can read arrays/lists with empty lists and null elements! 🎉
+- ✅ **Struct and Map support** - can read complex nested structures! 🎉 NEW!
+- ✅ **Phase 4.5: Full struct support** - maps and lists accessible in structs! ✨ NEW!
 
 ### Dictionary Encoding - Complete Status
 
@@ -186,70 +200,84 @@ Phase 3 implementation supports:
   - ❌ Maps
   - ❌ Nested structs
 
-**Phase 3 Achievement:**
+**Phase 3-4 Achievements:**
 
-Nullable columns now fully supported! The implementation decodes definition levels from each page
-to determine which values are NULL. Both PLAIN and dictionary encoding work correctly with
-nullable columns.
-
-Still **does not work** with:
-- ❌ Complex nested types (lists of structs, maps, nested structs) - Phase 4+
+- ✅ Nullable columns fully supported! Definition levels decoded from each page
+- ✅ Both PLAIN and dictionary encoding work with nullable columns
+- ✅ Structs and maps fully supported (Phase 4)
+- ✅ **Structs with complex children (maps, lists) fully supported!** (Phase 4.5) ✨
 
 Completed milestones:
 1. ✅ **Dictionary encoding for required columns** (Phase 2.1)
 2. ✅ **Extend dictionary encoding to all types** (Phase 2.2)
 3. ✅ **Definition levels** (nullable columns) (Phase 3) ✨
 4. ✅ **PyArrow compatibility** (Python ecosystem) ✨
-5. ✅ **Repetition levels and array reconstruction** (Phase 3) ✨ DONE!
+5. ✅ **Repetition levels and array reconstruction** (Phase 3) ✨
    - ✅ Decode repetition levels from pages
    - ✅ Reconstruct arrays from flat value sequences
    - ✅ Handle empty lists and null elements
    - ✅ `readAllRepeated()` API for all primitive types
-6. ✅ **Multi-level nested lists** (Phase 3) ✨ DONE!
+6. ✅ **Multi-level nested lists** (Phase 3) ✨
    - ✅ `readAllNested()` API for maxRepetitionLevel > 1
    - ✅ ArrayReconstructor with explicit ListState tracking
    - ✅ Follows Apache Arrow's DefRepLevelsToListInfo pattern
    - ✅ Handles NULL vs EMPTY vs POPULATED lists correctly
    - ✅ Comprehensive test coverage for all edge cases
+7. ✅ **Struct and Map support** (Phase 4) ✨
+   - ✅ Simple struct reading
+   - ✅ Nested structs
+   - ✅ Root-level map reading
+   - ✅ Nullable structs and maps
+8. ✅ **Structs with complex children** (Phase 4.5) ✨ NEW!
+   - ✅ DefRepLevelsToBitmap for struct validity
+   - ✅ Child array reconstruction (maps, lists, scalars)
+   - ✅ Proper truncation to values_read bound
+   - ✅ Map key type preservation (AnyHashable)
+   - ✅ Schema node identity matching
 
 Remaining priorities:
-7. **Complex nested types** (lists of structs, maps, nested structs) - Phase 4+
+9. **Lists of structs with complex children** - Phase 5
+10. **Deeply nested combinations** (e.g., `list<map<string, list<struct>>>`) - Phase 5+
 
 ---
 
-## Nested Structure Limitations (Phase 3)
+## Nested Structure Limitations (Phase 3-4)
 
 **Added**: 2025-11-03
+**Updated**: 2025-11-04 (Phase 4.5 Complete)
 
-### ❌ CRITICAL: Structs Containing Complex Children
+### ✅ FIXED: Structs Containing Complex Children (Phase 4.5)
 
-**Status**: Not supported - throws error with workarounds
+**Status**: ✅ **FULLY SUPPORTED as of Phase 4.5!**
 
-**Problem**: Structs with complex children (maps, lists, nested structs) require multi-level reconstruction not yet implemented.
+**What Was Fixed**: Structs with complex children (maps, lists, repeated fields) now fully supported using Arrow C++ StructReader pattern.
 
-**Example Schemas**:
-- `struct { string name; map<string,int> attrs; }`
-- `struct { int32 id; list<string> tags; }`
-- `struct { struct inner { ... } }`
+**Example Schemas NOW WORKING**:
+- ✅ `struct { string name; map<string,int> attrs; }` - struct with map field
+- ✅ `struct { int32 id; list<string> tags; }` - struct with list field
+- ✅ Repeated scalar fields in structs
 
-**Behavior**:
-- ❌ `readStruct()` throws `unsupportedType` error
-- ❌ `readRepeatedStruct()` throws `unsupportedType` error
-- ✅ Clear error message with workarounds
+**Implementation**:
+- Uses Arrow C++ StructReader::BuildArray pattern
+- DefRepLevelsToBitmap computes struct validity → values_read
+- Each child BuildArray(values_read) with proper truncation
+- Map fields returned as `[AnyHashable: Any?]` dictionaries
+- List fields returned as `[[Any?]?]` arrays
+- All children accessible via `StructValue.get()`
 
-**Error Message**:
-```
-Structs containing complex fields (maps, lists, nested structs) are not yet supported.
+**Test Coverage**:
+- ✅ Struct validity (NULL vs present)
+- ✅ Map child reconstruction
+- ✅ List child reconstruction
+- ✅ Empty maps/lists vs NULL maps/lists
+- ✅ Backward compatibility with simple structs
 
-Workarounds:
-1. Read maps directly: readMap(at: ["your_struct", "map_field"])
-2. Read lists directly: readRepeatedStruct(at: ["your_struct", "list_field", "list", "element"])
-3. Read primitive fields individually via column readers
+**Bug Fixes in Phase 4.5**:
+1. ✅ Child arrays truncated to struct's values_read (HIGH priority)
+2. ✅ Map key types preserved using AnyHashable (MEDIUM priority)
+3. ✅ Schema node identity matching instead of substring paths (MEDIUM priority)
 
-This limitation will be removed once proper multi-level reconstruction (LevelInfo) is implemented.
-```
-
-**When This Will Be Fixed**: Phase 4 - Port Arrow C++'s `DefRepLevelsToListInfo` for proper multi-level reconstruction
+**Remaining Limitation**: List of structs with complex children not yet supported (see below)
 
 ### ⚠️ list<map> - Flattens Intermediate Dimension
 

@@ -1,24 +1,28 @@
-// StructWithRepeatedChildrenTests - Tests for Phase 4.4: struct { map/list } support
+// StructWithRepeatedChildrenTests - Tests for Phase 4.5: struct { map/list } full support
 //
 // Licensed under the Apache License, Version 2.0
 //
-// PHASE 4.4 SCOPE AND LIMITATIONS:
+// PHASE 4.5 - COMPLETE IMPLEMENTATION:
 //
-// Phase 4.4 implements STRUCT VALIDITY COMPUTATION for structs with repeated children
-// (maps, lists, or repeated fields) using DefRepLevelsToBitmap integration.
+// Phase 4.5 implements FULL support for structs with repeated children
+// (maps, lists, or repeated fields), following Arrow C++ StructReader pattern.
 //
 // WHAT IS SUPPORTED:
-// - Correct detection of structs needing complex reconstruction
-// - Struct validity (NULL vs present) computed from child def/rep levels
-// - Backward compatibility with simple structs (scalars only)
+// ✅ Detection of structs needing complex reconstruction
+// ✅ Struct validity (NULL vs present) via DefRepLevelsToBitmap
+// ✅ Map child reconstruction - maps accessible in StructValue
+// ✅ List child reconstruction - lists accessible in StructValue
+// ✅ Repeated scalar child reconstruction
+// ✅ Backward compatibility with simple structs (scalars only)
 //
-// CURRENT LIMITATIONS:
-// - Repeated child VALUES are NOT reconstructed (deferred to Phase 4.5+)
-// - Only non-repeated scalar fields are included in StructValue
-// - Repeated children (maps, lists) are intentionally OMITTED to avoid data corruption
+// Following Arrow C++ pattern:
+// 1. Compute struct validity → get values_read
+// 2. Each child BuildArray(values_read)
+// 3. Combine all children into StructValue
 //
-// This means: structValue.get("attributes", as: MapType.self) will return nil,
-// but the struct validity (present vs NULL) is correct.
+// Example: struct { int32 id; map<string, int64> attrs; }
+//   - structValue.get("id", as: Int32.self) → works ✅
+//   - structValue.get("attrs", as: [String: Any?].self) → works ✅
 
 import XCTest
 @testable import Parquet

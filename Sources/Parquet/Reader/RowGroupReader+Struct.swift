@@ -6,21 +6,18 @@ import Foundation
 
 /// Extension for reading struct columns
 ///
-/// # Phase 4.4: Struct Validity Computation for Repeated Children
+/// # Phase 4.5: Full Struct Support with Repeated Children
 ///
-/// Phase 4.4 implements INFRASTRUCTURE ONLY for structs with repeated children
-/// (maps, lists, or repeated fields). This is NOT full support.
+/// Phase 4.5 implements COMPLETE support for structs with repeated children
+/// (maps, lists, or repeated fields), following Arrow C++ StructReader pattern.
 ///
 /// **What works:**
-/// - Detection of structs needing complex reconstruction
-/// - Struct validity (NULL vs present) computed from child def/rep levels using DefRepLevelsToBitmap
-/// - No crashes when reading struct { map } or struct { list }
-///
-/// **Critical limitation:**
-/// - Repeated child VALUES are NOT reconstructed
-/// - Map/list fields are intentionally OMITTED from StructValue
-/// - Only scalar sibling fields are accessible
-/// - Accessing structValue.get("mapField", ...) returns nil even when map is present
+/// - Detection of structs needing complex reconstruction ✅
+/// - Struct validity (NULL vs present) via DefRepLevelsToBitmap ✅
+/// - Map child reconstruction ✅
+/// - List child reconstruction ✅
+/// - Repeated scalar child reconstruction ✅
+/// - All children accessible via StructValue.get() ✅
 ///
 /// **Example:**
 /// ```swift
@@ -29,18 +26,23 @@ import Foundation
 ///
 /// for struct in structs {
 ///     if let s = struct {
-///         // ✅ Struct validity works: correctly identifies present vs NULL
-///         // ✅ Scalar fields work: id is accessible
+///         // ✅ Struct validity: correctly identifies present vs NULL
+///         // ✅ Scalar fields: accessible
 ///         let id = s.get("id", as: Int32.self)
-///         // ❌ Map fields DON'T work: attributes is omitted (returns nil)
-///         let attrs = s.get("attributes", as: MapType.self)  // Always nil!
+///         // ✅ Map fields: NOW WORK! Full reconstruction
+///         if let attrs = s.get("attributes", as: [String: Any?].self) {
+///             print("Attributes: \(attrs)")
+///         }
 ///     } else {
 ///         // ✅ NULL structs correctly identified
 ///     }
 /// }
 /// ```
 ///
-/// Full map/list reconstruction is deferred to Phase 4.5+.
+/// Follows Arrow C++ StructReader::BuildArray pattern:
+/// 1. Compute struct validity → get values_read
+/// 2. Each child BuildArray(values_read)
+/// 3. Combine into final struct array
 extension RowGroupReader {
     /// Check if a schema element or any of its descendants contains repeated/map/list nodes
     ///
@@ -185,26 +187,30 @@ extension RowGroupReader {
     /// - Struct validity comes from tags column's levels, projected to struct level
     /// - DefRepLevelsToBitmap handles the projection correctly
     ///
-    /// IMPORTANT LIMITATION (Phase 4.4):
-    /// This implementation computes struct validity correctly but does NOT reconstruct
-    /// repeated child values. Only non-repeated scalar fields are included in StructValue.
-    /// Repeated children (maps, lists) are omitted to avoid data corruption from misaligned indexing.
+    /// PHASE 4.5: Full child reconstruction
+    /// This implementation computes struct validity AND reconstructs all child values,
+    /// including maps and lists. Follows Arrow C++ StructReader pattern.
     private func readStructWithRepeatedChildren(
         at path: [String],
         element: SchemaElement,
         fieldColumns: [Column]
     ) throws -> [StructValue?] {
-        // PHASE 4.4: STRUCT VALIDITY VIA DEFREPLEVELSTOBITMAP
+        // PHASE 4.5: STRUCT WITH REPEATED CHILDREN - FULL RECONSTRUCTION
         //
-        // This phase focuses ONLY on computing correct struct validity (NULL vs present).
-        // Repeated child reconstruction is deferred to Phase 4.5+.
+        // Following Arrow C++ StructReader::BuildArray pattern:
+        // 1. Compute struct validity using DefRepLevelsToBitmap → get values_read
+        // 2. For each child: BuildArray(values_read)
+        //    - Scalar children: read with bound
+        //    - Map children: reconstruct with bound
+        //    - List children: reconstruct with bound
+        // 3. Combine all children into StructValue
         //
         // Implementation:
         // 1. Find representative child for validity computation
         // 2. Read its def/rep levels
         // 3. Compute struct validity using DefRepLevelsToBitmap
-        // 4. Read ONLY non-repeated scalar children
-        // 5. Build StructValues with validity + scalar fields only
+        // 4. Read ALL children (scalars, maps, lists) with values_read bound
+        // 5. Build StructValues with validity + all fields
 
         // Find first repeated child at struct level (not leaf level)
         // Maps/lists are group nodes, so we check struct's direct children
@@ -257,43 +263,58 @@ extension RowGroupReader {
             output: &validityOutput
         )
 
-        // Filter to ONLY non-repeated scalar children to avoid misaligned indexing
-        let scalarColumns = fieldColumns.filter { column in
-            // Find which struct child this column belongs to by walking up the schema tree
-            var current: SchemaElement? = column.element
-            var foundChild: SchemaElement?
+        // PHASE 4.5: Read ALL children with values_read bound
+        // Following Arrow C++ pattern: each child BuildArray(values_read)
+        var childArrays: [String: Any] = [:]
 
-            // Walk up to find the direct child of the struct
-            while let node = current {
-                if node.parent === element {
-                    // This node is a direct child of the struct
-                    foundChild = node
-                    break
+        for child in element.children {
+            if hasRepeatedOrComplexDescendants(child) {
+                // Map or list child - needs special reconstruction
+                if child.isMap {
+                    let mapValues = try readMapChild(
+                        childElement: child,
+                        parentPath: path,
+                        valuesReadBound: validityOutput.valuesRead
+                    )
+                    childArrays[child.name] = mapValues
+                } else if child.isList {
+                    let listValues = try readListChild(
+                        childElement: child,
+                        parentPath: path,
+                        valuesReadBound: validityOutput.valuesRead
+                    )
+                    childArrays[child.name] = listValues
+                } else {
+                    // Repeated scalar field
+                    let repeatedValues = try readRepeatedScalarChild(
+                        childElement: child,
+                        parentPath: path,
+                        valuesReadBound: validityOutput.valuesRead
+                    )
+                    childArrays[child.name] = repeatedValues
                 }
-                current = node.parent
+            } else {
+                // Simple scalar child - read normally with bound
+                let scalarValue = try readScalarChild(
+                    childElement: child,
+                    parentPath: path,
+                    valuesReadBound: validityOutput.valuesRead
+                )
+                childArrays[child.name] = scalarValue
             }
-
-            // Include column only if its parent child is non-repeated
-            if let child = foundChild {
-                return !hasRepeatedOrComplexDescendants(child)
-            }
-            return false
         }
 
-        // Read only scalar field columns (one value per row, safe to index by rowIndex)
-        let scalarReaders = try readFieldColumns(scalarColumns)
-
-        // Reconstruct structs using validity bitmap + scalar fields only
+        // Reconstruct structs using validity bitmap + all child arrays
         var result: [StructValue?] = []
         result.reserveCapacity(validityOutput.valuesRead)
 
         for rowIndex in 0..<validityOutput.valuesRead {
             if validityOutput.validBits[rowIndex] {
-                // Struct is present - build field data from scalar fields only
-                // Repeated children are intentionally omitted (Phase 4.4 limitation)
+                // Struct is present - build field data from all children
                 var fieldData: [String: Any?] = [:]
-                for reader in scalarReaders {
-                    fieldData[reader.name] = reader.values[rowIndex]
+                for (childName, childArray) in childArrays {
+                    // Index into child array to get value for this row
+                    fieldData[childName] = indexChildArray(childArray, at: rowIndex)
                 }
                 result.append(StructValue(element: element, fieldData: fieldData))
             } else {
@@ -303,6 +324,218 @@ extension RowGroupReader {
         }
 
         return result
+    }
+
+    /// Index into a child array to get value at specific row
+    /// Handles different array types (scalars, maps, lists)
+    private func indexChildArray(_ array: Any, at index: Int) -> Any? {
+        if let scalarArray = array as? [Any?] {
+            return scalarArray[index]
+        } else if let mapArray = array as? [[String: Any?]?] {
+            return mapArray[index]
+        } else if let mapArray = array as? [[AnyHashable: Any?]?] {
+            return mapArray[index]
+        } else if let listArray = array as? [[Any?]?] {
+            return listArray[index]
+        }
+        return nil
+    }
+
+    // MARK: - Child Array Readers (Phase 4.5)
+
+    /// Read map child with values_read bound
+    /// Follows Arrow C++ pattern: child receives parent's values_read count
+    private func readMapChild(
+        childElement: SchemaElement,
+        parentPath: [String],
+        valuesReadBound: Int
+    ) throws -> [[AnyHashable: Any?]?] {
+        // Map path is parent path + child name
+        let mapPath = parentPath + [childElement.name]
+
+        // Use existing readMap implementation
+        let maps = try readMap(at: mapPath)
+
+        // Adjust length to match struct values (truncate or pad nil)
+        var adjusted = Array(maps.prefix(min(maps.count, valuesReadBound)))
+        if adjusted.count < valuesReadBound {
+            adjusted.append(contentsOf: Array(repeating: nil, count: valuesReadBound - adjusted.count))
+        }
+
+        return adjusted.map { entries in
+            guard let entries = entries else { return nil }
+
+            // Convert to dictionary preserving key type whenever possible
+            var dict: [AnyHashable: Any?] = [:]
+            for entry in entries {
+                if let hashableKey = entry.key as? AnyHashable {
+                    dict[hashableKey] = entry.value
+                } else if let convertible = entry.key as? CustomStringConvertible {
+                    dict[AnyHashable(convertible.description)] = entry.value
+                } else {
+                    dict[AnyHashable(String(describing: entry.key))] = entry.value
+                }
+            }
+            return dict
+        }
+    }
+
+    /// Read list child with values_read bound
+    private func readListChild(
+        childElement: SchemaElement,
+        parentPath: [String],
+        valuesReadBound: Int
+    ) throws -> [[Any?]?] {
+        // List path is parent path + child name (needed for readRepeatedStruct call)
+        let listPath = parentPath + [childElement.name]
+
+        // Find the leaf column for this list using schema node identity
+        // IMPORTANT: Use node identity (===), not substring path matching!
+        // This prevents matching wrong columns when names overlap (e.g., "foo" vs "foo_meta")
+        guard let column = schema.columns.first(where: { column in
+            // Walk up from column's leaf element to root, checking if we pass through childElement
+            var current: SchemaElement? = column.element
+            while let node = current {
+                if node === childElement {
+                    return true  // Found the child element in this column's ancestry
+                }
+                current = node.parent
+            }
+            return false
+        }) else {
+            throw RowGroupReaderError.internalError("Could not find column for list child '\(childElement.name)'")
+        }
+
+        // Read list using typed column reader's readAllRepeated
+        let fullList: [[Any?]?]
+        switch column.physicalType {
+        case .int32:
+            let reader = try int32Column(at: column.index)
+            fullList = try reader.readAllRepeated()
+        case .int64:
+            let reader = try int64Column(at: column.index)
+            fullList = try reader.readAllRepeated()
+        case .float:
+            let reader = try floatColumn(at: column.index)
+            fullList = try reader.readAllRepeated()
+        case .double:
+            let reader = try doubleColumn(at: column.index)
+            fullList = try reader.readAllRepeated()
+        case .byteArray:
+            let reader = try stringColumn(at: column.index)
+            fullList = try reader.readAllRepeated()
+        default:
+            // For complex list elements (struct, map), use readRepeatedStruct
+            if column.element.isStruct || schema.element(at: listPath)?.children.first?.isStruct == true {
+                fullList = try readRepeatedStruct(at: listPath) as [[Any?]?]
+            } else {
+                throw RowGroupReaderError.unsupportedType("List element type \(column.physicalType) not supported")
+            }
+        }
+
+        var adjusted = Array(fullList.prefix(min(fullList.count, valuesReadBound)))
+        if adjusted.count < valuesReadBound {
+            adjusted.append(contentsOf: Array(repeating: nil, count: valuesReadBound - adjusted.count))
+        }
+
+        return adjusted
+    }
+
+    /// Read repeated scalar child with values_read bound
+    private func readRepeatedScalarChild(
+        childElement: SchemaElement,
+        parentPath: [String],
+        valuesReadBound: Int
+    ) throws -> [[Any?]?] {
+        // Find the column for this repeated scalar using schema node identity
+        // IMPORTANT: Use node identity (===), not path matching
+        // For repeated scalars, the child element itself should be a leaf (primitive column)
+        guard let column = schema.columns.first(where: { column in
+            // For repeated scalars, check if column element matches child element directly
+            column.element === childElement
+        }) else {
+            throw RowGroupReaderError.internalError("Could not find column for repeated scalar child '\(childElement.name)'")
+        }
+
+        // Read based on physical type
+        let fullArray: [[Any?]?]
+        switch column.physicalType {
+        case .int32:
+            let reader = try int32Column(at: column.index)
+            fullArray = try reader.readAllRepeated()
+        case .int64:
+            let reader = try int64Column(at: column.index)
+            fullArray = try reader.readAllRepeated()
+        case .float:
+            let reader = try floatColumn(at: column.index)
+            fullArray = try reader.readAllRepeated()
+        case .double:
+            let reader = try doubleColumn(at: column.index)
+            fullArray = try reader.readAllRepeated()
+        case .byteArray:
+            let reader = try stringColumn(at: column.index)
+            fullArray = try reader.readAllRepeated()
+        default:
+            throw RowGroupReaderError.unsupportedType("Repeated scalar type \(column.physicalType) not supported")
+        }
+
+        var adjusted = Array(fullArray.prefix(min(fullArray.count, valuesReadBound)))
+        if adjusted.count < valuesReadBound {
+            adjusted.append(contentsOf: Array(repeating: nil, count: valuesReadBound - adjusted.count))
+        }
+
+        return adjusted
+    }
+
+    /// Read simple scalar child with values_read bound
+    private func readScalarChild(
+        childElement: SchemaElement,
+        parentPath: [String],
+        valuesReadBound: Int
+    ) throws -> [Any?] {
+        // Find the column for this scalar using schema node identity
+        // IMPORTANT: Use node identity (===), not path matching
+        // For scalars, the child element itself should be a leaf (primitive column)
+        guard let column = schema.columns.first(where: { column in
+            // For scalars, check if column element matches child element directly
+            column.element === childElement
+        }) else {
+            throw RowGroupReaderError.internalError("Could not find column for scalar child '\(childElement.name)'")
+        }
+
+        // Read based on physical type
+        let fullArray: [Any?]
+        switch column.physicalType {
+        case .int32:
+            let reader = try int32Column(at: column.index)
+            let (values, _) = try reader.readAllWithLevels()
+            fullArray = values.map { $0 as Any? }
+        case .int64:
+            let reader = try int64Column(at: column.index)
+            let (values, _) = try reader.readAllWithLevels()
+            fullArray = values.map { $0 as Any? }
+        case .float:
+            let reader = try floatColumn(at: column.index)
+            let (values, _) = try reader.readAllWithLevels()
+            fullArray = values.map { $0 as Any? }
+        case .double:
+            let reader = try doubleColumn(at: column.index)
+            let (values, _) = try reader.readAllWithLevels()
+            fullArray = values.map { $0 as Any? }
+        case .byteArray:
+            let reader = try stringColumn(at: column.index)
+            let (values, _) = try reader.readAllWithLevels()
+            fullArray = values.map { $0 as Any? }
+        default:
+            throw RowGroupReaderError.unsupportedType("Scalar type \(column.physicalType) not supported")
+        }
+
+        var adjusted = Array(fullArray.prefix(min(fullArray.count, valuesReadBound)))
+        if adjusted.count < valuesReadBound {
+            adjusted.append(contentsOf: Array(repeating: nil, count: valuesReadBound - adjusted.count))
+        }
+
+        return adjusted
     }
 
     /// Compute struct's LevelInfo by projecting from representative column
