@@ -37,19 +37,25 @@ final class PageWriter {
     ///   - numValues: Number of values in page
     ///   - encoding: Encoding used for values
     ///   - definitionLevels: Optional definition levels for nullable columns
+    ///   - repetitionLevels: Optional repetition levels for repeated columns (lists)
     /// - Returns: Page write result with offsets and sizes
     /// - Throws: WriterError if write fails
     func writeDataPage(
         values: Data,
         numValues: Int32,
         encoding: Encoding,
-        definitionLevels: Data? = nil
+        definitionLevels: Data? = nil,
+        repetitionLevels: Data? = nil
     ) throws -> PageWriteResult {
         // Capture starting offset before writing
         let startOffset = try sink.tell()
 
-        // Build page data: [definition levels] + values
+        // Build page data: [repetition levels] + [definition levels] + values
+        // Order per Parquet spec: repetition levels come first
         var pageData = Data()
+        if let repLevels = repetitionLevels {
+            pageData.append(repLevels)
+        }
         if let defLevels = definitionLevels {
             pageData.append(defLevels)
         }
@@ -65,7 +71,7 @@ final class PageWriter {
             numValues: numValues,
             encoding: encoding.toThrift(),
             definitionLevelEncoding: .rle,  // Always RLE for definition levels
-            repetitionLevelEncoding: .rle,  // Not used in W4 (no repeated columns yet)
+            repetitionLevelEncoding: .rle,  // Always RLE for repetition levels (W7: lists)
             statistics: nil  // Statistics not implemented yet
         )
 
