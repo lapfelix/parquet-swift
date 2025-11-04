@@ -5,7 +5,7 @@
 
 ## Executive Summary
 
-This document analyzes the Apache Arrow C++ Parquet implementation (located in `third_party/arrow/cpp/src/parquet/`) to guide the development of a native Swift implementation. The C++ codebase is well-structured, mature, and serves as the authoritative reference for Parquet format compliance.
+This document analyzes the Apache Arrow C++ Parquet implementation (located in [cpp/src/parquet/](https://github.com/apache/arrow/tree/main/cpp/src/parquet)) to guide the development of a native Swift implementation. The C++ codebase is well-structured, mature, and serves as the authoritative reference for Parquet format compliance.
 
 **Key Findings:**
 - **~110 files** in the core Parquet directory
@@ -237,7 +237,7 @@ The C++ implementation follows a layered architecture:
    - Snappy, GZIP, LZ4, ZSTD, Brotli
    - **Important:** Codecs are accessed through **Arrow's Codec factory** (`arrow::util::Codec::Create`)
    - Parquet code doesn't directly call compression libraries; it uses Arrow's abstraction
-   - See `third_party/arrow/cpp/src/arrow/util/compression.h` for the Codec interface
+   - See [`compression.h`](https://github.com/apache/arrow/blob/main/cpp/src/arrow/util/compression.h) for the Codec interface
    - **Swift port:** Options:
      - Create thin wrappers over `libarrow` codec implementations (via C interop)
      - Implement own Swift codec protocol with bindings to compression C libraries
@@ -610,7 +610,7 @@ Swift code is estimated to be ~75% of C++ LOC due to:
 
 The Parquet format is defined in:
 - Repository: `https://github.com/apache/parquet-format`
-- Key file: `third_party/arrow/cpp/src/parquet/parquet.thrift` (1,250 lines)
+- Key file: [`parquet.thrift`](https://github.com/apache/arrow/blob/main/cpp/src/parquet/parquet.thrift) (1,250 lines)
 
 ---
 
@@ -642,7 +642,7 @@ The Parquet format is defined in:
 **Critical files to study closely:**
 
 1. **RecordReader - Level Decoding** (start here for nested types):
-   - `third_party/arrow/cpp/src/parquet/column_reader.cc:L1800-L2500` - RecordReader implementation
+   - [`column_reader.cc:L1800-L2500`](https://github.com/apache/arrow/blob/main/cpp/src/parquet/column_reader.cc#L1800-L2500) - RecordReader implementation
    - This is the **core of definition/repetition level handling**
    - Study the `ReadRecordData` and `ReadRecordsAndFlatten` methods
    - Separates level decoding from value decoding - excellent architecture to port

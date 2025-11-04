@@ -2,7 +2,9 @@
   "permissions": {
     "allow": [
       "Bash(swift test:*)",
-      "Bash(swift build:*)"
+      "Bash(swift build:*)",
+      "WebFetch(domain:github.com)",
+      "Bash(python3:*)"
     ],
     "deny": [],
     "ask": []

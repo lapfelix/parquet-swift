@@ -10,7 +10,7 @@
 > **tl;dr**: For experienced developers familiar with the concepts. See detailed sections below for implementation guidance.
 
 ### LevelInfo Metadata
-- Defined in `third_party/arrow/cpp/src/parquet/level_conversion.h`.
+- Defined in [`level_conversion.h`](https://github.com/apache/arrow/blob/main/cpp/src/parquet/level_conversion.h).
 - Captures per-node thresholds:
   - `def_level`: def-level at which value is present.
   - `rep_level`: repetition level aligned with closest repeated ancestor.
@@ -92,7 +92,7 @@ Repetition levels:
 
 ### LevelInfo Structure
 
-Located in: `third_party/arrow/cpp/src/parquet/level_conversion.h:28-154`
+Located in: [`level_conversion.h:28-154`](https://github.com/apache/arrow/blob/main/cpp/src/parquet/level_conversion.h#L28-L154)
 
 ```cpp
 struct LevelInfo {
@@ -146,7 +146,7 @@ Def levels: `[0, 1, 2, 3, 4]`
 
 ### ValidityBitmapInputOutput Structure
 
-Located in: `third_party/arrow/cpp/src/parquet/level_conversion.h:157-176`
+Located in: [`level_conversion.h:157-176`](https://github.com/apache/arrow/blob/main/cpp/src/parquet/level_conversion.h#L157-L176)
 
 ```cpp
 struct ValidityBitmapInputOutput {
@@ -173,7 +173,7 @@ struct ValidityBitmapInputOutput {
 
 ### Algorithm 1: DefRepLevelsToListInfo
 
-**Location**: `third_party/arrow/cpp/src/parquet/level_conversion.cc:46-127`
+**Location**: [`level_conversion.cc:46-127`](https://github.com/apache/arrow/blob/main/cpp/src/parquet/level_conversion.cc#L46-L127)
 
 **Purpose**: Reconstructs list offsets and validity bitmap from definition/repetition levels
 
@@ -243,7 +243,7 @@ void DefRepLevelsToListInfo(
 
 ### Algorithm 2: DefRepLevelsToBitmap
 
-**Location**: `third_party/arrow/cpp/src/parquet/level_conversion.cc:168-177`
+**Location**: [`level_conversion.cc:168-177`](https://github.com/apache/arrow/blob/main/cpp/src/parquet/level_conversion.cc#L168-L177)
 
 **Purpose**: Reconstruct validity bitmap for **structs** where all descendants contain lists
 
@@ -272,7 +272,7 @@ void DefRepLevelsToBitmap(
 
 ### Algorithm 3: DefLevelsToBitmap
 
-**Location**: `third_party/arrow/cpp/src/parquet/level_conversion.cc:131-148`
+**Location**: [`level_conversion.cc:131-148`](https://github.com/apache/arrow/blob/main/cpp/src/parquet/level_conversion.cc#L131-L148)
 
 **Purpose**: Convert definition levels to validity bitmap for **non-list arrays** and **structs without list descendants**
 
@@ -284,7 +284,7 @@ void DefRepLevelsToBitmap(
 
 ### Case 1: struct { map }
 
-**StructReader** implementation: `third_party/arrow/cpp/src/parquet/arrow/reader.cc:706-842`
+**StructReader** implementation: [`reader.cc:706-842`](https://github.com/apache/arrow/blob/main/cpp/src/parquet/arrow/reader.cc#L706-L842)
 
 #### Detection Logic (lines 715-725):
 
@@ -382,7 +382,7 @@ When the outer list processes entries, it skips `rep_level=2` entries (those bel
 
 ### Computing LevelInfo
 
-**Location**: `third_party/arrow/cpp/src/parquet/level_conversion.h:125-140`
+**Location**: [`level_conversion.h:125-140`](https://github.com/apache/arrow/blob/main/cpp/src/parquet/level_conversion.h#L125-L140)
 
 ```cpp
 static LevelInfo ComputeLevelInfo(const ColumnDescriptor* descr) {

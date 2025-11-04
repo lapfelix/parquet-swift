@@ -250,8 +250,8 @@ With failing tests in place:
 
 ## References
 
-- Arrow C++ LevelInfo: `third_party/arrow/cpp/src/parquet/arrow/reader.cc:907-936`
-- Arrow C++ StructReader: `third_party/arrow/cpp/src/parquet/arrow/reader.cc:781-829`
+- Arrow C++ LevelInfo: [`reader.cc:907-936`](https://github.com/apache/arrow/blob/main/cpp/src/parquet/arrow/reader.cc#L907-L936)
+- Arrow C++ StructReader: [`reader.cc:781-829`](https://github.com/apache/arrow/blob/main/cpp/src/parquet/arrow/reader.cc#L781-L829)
 - Parquet def/rep levels: `Column.repeatedAncestorDefLevel`, `Column.repeatedAncestorDefLevels`
 
 ---
