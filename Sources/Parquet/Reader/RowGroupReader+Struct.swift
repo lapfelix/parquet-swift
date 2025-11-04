@@ -5,6 +5,42 @@
 import Foundation
 
 /// Extension for reading struct columns
+///
+/// # Phase 4.4: Struct Validity Computation for Repeated Children
+///
+/// Phase 4.4 implements INFRASTRUCTURE ONLY for structs with repeated children
+/// (maps, lists, or repeated fields). This is NOT full support.
+///
+/// **What works:**
+/// - Detection of structs needing complex reconstruction
+/// - Struct validity (NULL vs present) computed from child def/rep levels using DefRepLevelsToBitmap
+/// - No crashes when reading struct { map } or struct { list }
+///
+/// **Critical limitation:**
+/// - Repeated child VALUES are NOT reconstructed
+/// - Map/list fields are intentionally OMITTED from StructValue
+/// - Only scalar sibling fields are accessible
+/// - Accessing structValue.get("mapField", ...) returns nil even when map is present
+///
+/// **Example:**
+/// ```swift
+/// // Schema: struct { int32 id; map<string, int64> attributes; }
+/// let structs = try rowGroup.readStruct(at: ["user"])
+///
+/// for struct in structs {
+///     if let s = struct {
+///         // ✅ Struct validity works: correctly identifies present vs NULL
+///         // ✅ Scalar fields work: id is accessible
+///         let id = s.get("id", as: Int32.self)
+///         // ❌ Map fields DON'T work: attributes is omitted (returns nil)
+///         let attrs = s.get("attributes", as: MapType.self)  // Always nil!
+///     } else {
+///         // ✅ NULL structs correctly identified
+///     }
+/// }
+/// ```
+///
+/// Full map/list reconstruction is deferred to Phase 4.5+.
 extension RowGroupReader {
     /// Check if a schema element or any of its descendants contains repeated/map/list nodes
     ///
@@ -31,6 +67,25 @@ extension RowGroupReader {
             }
         }
 
+        return false
+    }
+
+    /// Check if struct needs complex reconstruction using DefRepLevelsToBitmap
+    ///
+    /// Matches Arrow C++ StructReader::IsOrHasRepeatedChild() semantics:
+    /// Returns TRUE if ANY child has repeated descendants (maps, lists, or repeated fields).
+    ///
+    /// When true, struct validity must be computed from child def/rep levels using DefRepLevelsToBitmap.
+    /// When false, simple definition-level-only reconstruction suffices.
+    internal func needsComplexReconstruction(_ element: SchemaElement) -> Bool {
+        // Check if ANY child has repeated descendants
+        for child in element.children {
+            if hasRepeatedOrComplexDescendants(child) {
+                // Found a repeated/complex child - need complex reconstruction
+                return true
+            }
+        }
+        // No children have repeated descendants - can use simple reconstruction
         return false
     }
 
@@ -80,42 +135,24 @@ extension RowGroupReader {
             )
         }
 
-        // Check if this struct contains any repeated or map/list fields (at any depth)
-        // We recursively check all descendants to catch cases like:
-        // - struct { repeated int32 }
-        // - struct { map }
-        // - struct { list }
-        // - struct { struct { map } }  ← nested case requiring recursion
-        //
-        // Nested structs with ONLY scalar fields are allowed and can be read.
-        let hasUnsupportedChildren = element.children.contains { child in
-            hasRepeatedOrComplexDescendants(child)
+        // Branch between simple and complex reconstruction
+        if needsComplexReconstruction(element) {
+            // Complex case: struct has repeated children (maps, lists, or repeated fields)
+            // Must use DefRepLevelsToBitmap to compute validity from child levels
+            return try readStructWithRepeatedChildren(at: path, element: element, fieldColumns: fieldColumns)
+        } else {
+            // Simple case: struct has only non-repeated children
+            // Can use definition-level-only reconstruction
+            return try readStructSimple(element: element, fieldColumns: fieldColumns)
         }
+    }
 
-        if hasUnsupportedChildren {
-            throw RowGroupReaderError.unsupportedType(
-                "Structs containing repeated or map/list fields are not yet supported.\n" +
-                "\n" +
-                "This struct has fields that are:\n" +
-                "- Repeated (e.g., repeated int32 tags)\n" +
-                "- Maps (map<K,V>)\n" +
-                "- Lists (list<T>)\n" +
-                "\n" +
-                "Note: Nested structs with only scalar fields ARE supported.\n" +
-                "\n" +
-                "Workarounds:\n" +
-                "1. For repeated fields: Use the primitive column reader\n" +
-                "   - Access schema: let schema = reader.metadata.schema\n" +
-                "   - Find column: let col = schema.columns.first(where: { $0.path == [\"struct\", \"field\"] })!\n" +
-                "   - Read via: rowGroup.int32Column(at: col.index).readAllRepeated()\n" +
-                "2. For maps: Use readMap(at: path)\n" +
-                "3. For lists: Use appropriate list reading method\n" +
-                "\n" +
-                "This limitation will be removed once proper multi-level reconstruction is implemented.\n" +
-                "See docs/limitations.md for details."
-            )
-        }
-
+    /// Read struct using simple definition-level-only reconstruction
+    /// Used when all children are non-repeated (scalars or simple nested structs)
+    private func readStructSimple(
+        element: SchemaElement,
+        fieldColumns: [Column]
+    ) throws -> [StructValue?] {
         // For simple structs (primitives only), iterate through definition levels
         let fieldReaders = try readFieldColumns(fieldColumns)
 
@@ -136,6 +173,268 @@ extension RowGroupReader {
         }
 
         return result
+    }
+
+    /// Read struct with repeated children using DefRepLevelsToBitmap
+    ///
+    /// When a struct contains repeated children (maps, lists, or repeated fields),
+    /// we must compute struct validity from the child column's def/rep levels.
+    ///
+    /// Example: struct { int32 id; list<string> tags; }
+    /// - The 'tags' child has multiple values per row (repeated)
+    /// - Struct validity comes from tags column's levels, projected to struct level
+    /// - DefRepLevelsToBitmap handles the projection correctly
+    ///
+    /// IMPORTANT LIMITATION (Phase 4.4):
+    /// This implementation computes struct validity correctly but does NOT reconstruct
+    /// repeated child values. Only non-repeated scalar fields are included in StructValue.
+    /// Repeated children (maps, lists) are omitted to avoid data corruption from misaligned indexing.
+    private func readStructWithRepeatedChildren(
+        at path: [String],
+        element: SchemaElement,
+        fieldColumns: [Column]
+    ) throws -> [StructValue?] {
+        // PHASE 4.4: STRUCT VALIDITY VIA DEFREPLEVELSTOBITMAP
+        //
+        // This phase focuses ONLY on computing correct struct validity (NULL vs present).
+        // Repeated child reconstruction is deferred to Phase 4.5+.
+        //
+        // Implementation:
+        // 1. Find representative child for validity computation
+        // 2. Read its def/rep levels
+        // 3. Compute struct validity using DefRepLevelsToBitmap
+        // 4. Read ONLY non-repeated scalar children
+        // 5. Build StructValues with validity + scalar fields only
+
+        // Find first repeated child at struct level (not leaf level)
+        // Maps/lists are group nodes, so we check struct's direct children
+        guard let repeatedChild = element.children.first(where: { child in
+            hasRepeatedOrComplexDescendants(child)
+        }) else {
+            throw RowGroupReaderError.internalError(
+                "needsComplexReconstruction returned true but no repeated child found in struct children"
+            )
+        }
+
+        // Find a leaf column belonging to this repeated child
+        // Column paths include parent names, e.g., ["user", "attributes", "key_value", "key"]
+        // We need to check if the column's schema path passes through the repeated child node
+        //
+        // IMPORTANT: Use schema node matching, not substring matching!
+        // A struct with ["foo_map", "map_metadata"] should not match both for "map"
+        guard let representativeColumn = fieldColumns.first(where: { column in
+            // Walk up from column's leaf element to root, checking if we pass through repeatedChild
+            var current: SchemaElement? = column.element
+            while let node = current {
+                if node === repeatedChild {
+                    return true  // Found the repeated child in this column's ancestry
+                }
+                current = node.parent
+            }
+            return false
+        }) else {
+            throw RowGroupReaderError.internalError(
+                "Could not find leaf column for repeated child '\(repeatedChild.name)'"
+            )
+        }
+
+        // Read representative column's levels
+        let (defLevels, repLevels) = try readRepresentativeColumnLevels(representativeColumn)
+
+        // Compute struct's LevelInfo from representative column
+        // Use the column's LevelInfo and project to struct level
+        let structLevelInfo = computeStructLevelInfo(
+            from: representativeColumn,
+            structElement: element,
+            repeatedChild: repeatedChild
+        )
+
+        var validityOutput = ArrayReconstructor.ValidityBitmapOutput()
+        try ArrayReconstructor.defRepLevelsToBitmap(
+            definitionLevels: defLevels,
+            repetitionLevels: repLevels,
+            levelInfo: structLevelInfo,
+            output: &validityOutput
+        )
+
+        // Filter to ONLY non-repeated scalar children to avoid misaligned indexing
+        let scalarColumns = fieldColumns.filter { column in
+            // Find which struct child this column belongs to by walking up the schema tree
+            var current: SchemaElement? = column.element
+            var foundChild: SchemaElement?
+
+            // Walk up to find the direct child of the struct
+            while let node = current {
+                if node.parent === element {
+                    // This node is a direct child of the struct
+                    foundChild = node
+                    break
+                }
+                current = node.parent
+            }
+
+            // Include column only if its parent child is non-repeated
+            if let child = foundChild {
+                return !hasRepeatedOrComplexDescendants(child)
+            }
+            return false
+        }
+
+        // Read only scalar field columns (one value per row, safe to index by rowIndex)
+        let scalarReaders = try readFieldColumns(scalarColumns)
+
+        // Reconstruct structs using validity bitmap + scalar fields only
+        var result: [StructValue?] = []
+        result.reserveCapacity(validityOutput.valuesRead)
+
+        for rowIndex in 0..<validityOutput.valuesRead {
+            if validityOutput.validBits[rowIndex] {
+                // Struct is present - build field data from scalar fields only
+                // Repeated children are intentionally omitted (Phase 4.4 limitation)
+                var fieldData: [String: Any?] = [:]
+                for reader in scalarReaders {
+                    fieldData[reader.name] = reader.values[rowIndex]
+                }
+                result.append(StructValue(element: element, fieldData: fieldData))
+            } else {
+                // Struct is NULL
+                result.append(nil)
+            }
+        }
+
+        return result
+    }
+
+    /// Compute struct's LevelInfo by projecting from representative column
+    ///
+    /// Uses the representative column's LevelInfo (from descriptor) and subtracts
+    /// the levels contributed by the repeated child to get struct's levels.
+    ///
+    /// This matches Arrow's approach: start with column descriptor levels and
+    /// project backwards to parent node, rather than guessing by walking the tree.
+    private func computeStructLevelInfo(
+        from representativeColumn: Column,
+        structElement: SchemaElement,
+        repeatedChild: SchemaElement
+    ) -> LevelInfo {
+        // The representative column has exact levels from its descriptor.
+        // Example: struct { map<string, int64> attributes }
+        //   Column "key": defLevel=4, repLevel=1, repeatedAncestorDefLevel=1
+        //     - Root optional struct: +1 def
+        //     - Map present: +1 def
+        //     - key_value repeated: +1 def, +1 rep
+        //     - key required: +0 def
+        //   Struct: defLevel=1, repLevel=0, repeatedAncestorDefLevel=0
+        //
+        // We need to subtract the levels contributed by the repeated child (map)
+        // and everything below it.
+
+        // Count levels contributed by repeated child and its descendants
+        let childDefLevels = countDefinitionLevels(from: repeatedChild)
+        let childRepLevels = countRepetitionLevels(from: repeatedChild)
+
+        // Struct's levels = column's levels - child's contribution
+        let structDefLevel = representativeColumn.maxDefinitionLevel - childDefLevels
+        let structRepLevel = representativeColumn.maxRepetitionLevel - childRepLevels
+
+        // Repeated ancestor def level
+        let structRepeatedAncestorDefLevel: Int
+        if structRepLevel > 0 {
+            // Struct is inside a repeated group
+            // The column's repeatedAncestorDefLevel points to the innermost repeated ancestor
+            // If that ancestor is ABOVE the struct, use it; otherwise struct has no repeated ancestor
+            if let columnRepeatedAncestorDefLevel = representativeColumn.repeatedAncestorDefLevel {
+                // Check if the repeated ancestor is above the struct level
+                if columnRepeatedAncestorDefLevel <= structDefLevel {
+                    structRepeatedAncestorDefLevel = columnRepeatedAncestorDefLevel
+                } else {
+                    // Repeated ancestor is below struct (shouldn't happen for valid schemas)
+                    structRepeatedAncestorDefLevel = 0
+                }
+            } else {
+                structRepeatedAncestorDefLevel = 0
+            }
+        } else {
+            structRepeatedAncestorDefLevel = 0
+        }
+
+        return LevelInfo(
+            defLevel: structDefLevel,
+            repLevel: structRepLevel,
+            repeatedAncestorDefLevel: structRepeatedAncestorDefLevel
+        )
+    }
+
+    /// Count definition levels contributed by a node and its descendants
+    private func countDefinitionLevels(from element: SchemaElement) -> Int {
+        var count = 0
+
+        // Add this node's contribution
+        if let repetition = element.repetitionType {
+            count += repetition.maxDefinitionLevel
+        }
+
+        // Recursively add children's contributions
+        for child in element.children {
+            count += countDefinitionLevels(from: child)
+        }
+
+        return count
+    }
+
+    /// Count repetition levels contributed by a node and its descendants
+    private func countRepetitionLevels(from element: SchemaElement) -> Int {
+        var count = 0
+
+        // Add this node's contribution
+        if let repetition = element.repetitionType {
+            count += repetition.maxRepetitionLevel
+        }
+
+        // Recursively add children's contributions
+        for child in element.children {
+            count += countRepetitionLevels(from: child)
+        }
+
+        return count
+    }
+
+    /// Read def/rep levels from a representative column for struct validity computation
+    private func readRepresentativeColumnLevels(_ column: Column) throws -> (defLevels: [UInt16], repLevels: [UInt16]) {
+        let columnIndex = column.index
+
+        // Read levels based on physical type
+        switch column.physicalType {
+        case .int32:
+            let reader = try int32Column(at: columnIndex)
+            let (_, defLevels, repLevels) = try reader.readAllWithAllLevels()
+            return (defLevels, repLevels)
+
+        case .int64:
+            let reader = try int64Column(at: columnIndex)
+            let (_, defLevels, repLevels) = try reader.readAllWithAllLevels()
+            return (defLevels, repLevels)
+
+        case .float:
+            let reader = try floatColumn(at: columnIndex)
+            let (_, defLevels, repLevels) = try reader.readAllWithAllLevels()
+            return (defLevels, repLevels)
+
+        case .double:
+            let reader = try doubleColumn(at: columnIndex)
+            let (_, defLevels, repLevels) = try reader.readAllWithAllLevels()
+            return (defLevels, repLevels)
+
+        case .byteArray:
+            let reader = try stringColumn(at: columnIndex)
+            let (_, defLevels, repLevels) = try reader.readAllWithAllLevels()
+            return (defLevels, repLevels)
+
+        default:
+            throw RowGroupReaderError.unsupportedType(
+                "Field \(column.name) has unsupported type \(column.physicalType.name)"
+            )
+        }
     }
 
     /// Read all field columns and their data

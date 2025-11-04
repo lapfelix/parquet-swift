@@ -141,16 +141,17 @@ final class NestedMapReaderTests: XCTestCase {
     func testStructWithMap() throws {
         // Schema: optional struct { optional map<string, int64> }
         //
-        // FAIL-FAST BEHAVIOR: Structs containing complex children throw clear error.
+        // PHASE 4.4 LIMITATION: Repeated children are intentionally omitted!
         //
-        // Expected data (cannot be read via readStruct):
-        // - Row 0: {attributes: {name: 1, age: 30}}  # Struct and map present
-        // - Row 1: {attributes: {}}                   # Struct present, empty map
-        // - Row 2: {attributes: None}                 # Struct present, NULL map
-        // - Row 3: None                               # NULL struct
-        // - Row 4: {attributes: {key: None}}         # Map with NULL value
+        // This test validates that readStruct() no longer throws an error for structs
+        // with map children, but DOES NOT test actual map value reconstruction.
         //
-        // Workaround: Read map directly via readMap(at: ["user", "attributes"])
+        // Current behavior:
+        // - Struct validity (NULL vs present) is computed correctly
+        // - Map fields are OMITTED from StructValue to avoid data corruption
+        // - Only scalar sibling fields would be accessible (this struct has none)
+        //
+        // This is infrastructure work only. Full map reconstruction is Phase 4.5+.
 
         let url = fixtureURL("nested_struct_with_map.parquet")
 
@@ -159,25 +160,21 @@ final class NestedMapReaderTests: XCTestCase {
 
         let rowGroup = try reader.rowGroup(at: 0)
 
-        // Attempt to read struct should throw error
-        XCTAssertThrowsError(try rowGroup.readStruct(at: ["user"])) { error in
-            guard case RowGroupReaderError.unsupportedType(let message) = error else {
-                XCTFail("Expected unsupportedType error, got \(error)")
-                return
-            }
+        // Phase 4.4 INFRASTRUCTURE: Can read struct validity without crashing
+        let structs = try rowGroup.readStruct(at: ["user"])
 
-            // Validate error message is helpful and specific to structs (not lists)
-            XCTAssertTrue(message.contains("repeated or map/list"),
-                         "Error should mention 'repeated or map/list'")
-            XCTAssertTrue(message.contains("Workarounds"),
-                         "Error should provide workarounds")
-            XCTAssertTrue(message.contains("reader.metadata.schema"),
-                         "Error should show how to access schema from reader")
-            XCTAssertTrue(message.contains("Nested structs with only scalar fields ARE supported"),
-                         "Error should clarify nested structs ARE allowed")
-            XCTAssertFalse(message.contains("Structs in lists"),
-                          "Error should not mention 'in lists' for flat struct")
-        }
+        XCTAssertEqual(structs.count, 5, "Should have 5 rows")
+
+        // Verify ONLY struct validity (map values are not accessible)
+        XCTAssertNotNil(structs[0], "Row 0: Struct validity = present")
+        XCTAssertNotNil(structs[1], "Row 1: Struct validity = present")
+        XCTAssertNotNil(structs[2], "Row 2: Struct validity = present")
+        XCTAssertNil(structs[3], "Row 3: Struct validity = NULL")
+        XCTAssertNotNil(structs[4], "Row 4: Struct validity = present")
+
+        // CRITICAL: Map fields are intentionally omitted in Phase 4.4
+        // Accessing user["attributes"] will return nil even when map is present
+        // This is a known limitation until Phase 4.5+ implements child reconstruction
     }
 
     // MARK: - Deep nesting: list<struct<map>>
