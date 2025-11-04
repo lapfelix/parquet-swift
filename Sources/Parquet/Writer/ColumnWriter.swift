@@ -365,18 +365,33 @@ public final class StringColumnWriter {
     private var totalValues: Int64 = 0
     private let columnStartOffset: Int64
     private var dataPageOffset: Int64?
+    private var dictionaryPageOffset: Int64?
     private var totalCompressedSize: Int64 = 0
     private var totalUncompressedSize: Int64 = 0
+
+    // Dictionary encoding support
+    private var dictionaryEncoder: DictionaryEncoder<String>?
+    private var usedEncodings: Set<Encoding> = []
 
     init(column: Column, properties: WriterProperties, pageWriter: PageWriter, startOffset: Int64) {
         self.column = column
         self.properties = properties
         self.pageWriter = pageWriter
         self.columnStartOffset = startOffset
+
+        // Enable dictionary encoding if configured
+        if properties.dictionaryEnabled(for: column.name) {
+            self.dictionaryEncoder = DictionaryEncoder<String>()
+        }
     }
 
     /// Write a batch of String values
     public func writeValues(_ values: [String]) throws {
+        // Feed values to dictionary encoder if enabled
+        if let dictEncoder = dictionaryEncoder {
+            try dictEncoder.encode(values)
+        }
+
         valueBuffer.append(contentsOf: values)
         totalValues += Int64(values.count)
 
@@ -390,13 +405,18 @@ public final class StringColumnWriter {
             return
         }
 
-        let encoder = PlainEncoder<String>()
-        try encoder.encode(valueBuffer)
+        // Write dictionary page before first data page if using dictionary encoding
+        if let dictEncoder = dictionaryEncoder, dictionaryPageOffset == nil, dictEncoder.shouldUseDictionary {
+            try writeDictionaryPage(dictEncoder)
+        }
+
+        // Encode data page
+        let (encodedData, encoding) = try encodeDataPage()
 
         let result = try pageWriter.writeDataPage(
-            values: encoder.data,
+            values: encodedData,
             numValues: Int32(valueBuffer.count),
-            encoding: .plain
+            encoding: encoding
         )
 
         if dataPageOffset == nil {
@@ -408,7 +428,48 @@ public final class StringColumnWriter {
         totalCompressedSize += Int64(result.compressedSize + headerLength)
         totalUncompressedSize += Int64(result.uncompressedSize + headerLength)
 
+        usedEncodings.insert(encoding)
+
+        // Clear page indices after successful flush (Bug fix: prevents duplicate rows)
+        if let dictEncoder = dictionaryEncoder, dictEncoder.shouldUseDictionary {
+            dictEncoder.clearPageIndices()
+        }
+
         valueBuffer.removeAll(keepingCapacity: true)
+    }
+
+    private func writeDictionaryPage(_ dictEncoder: DictionaryEncoder<String>) throws {
+        let dictData = try dictEncoder.dictionaryData()
+        let numDictValues = Int32(dictEncoder.dictionaryCount)
+
+        let result = try pageWriter.writeDictionaryPage(
+            dictionary: dictData,
+            numValues: numDictValues,
+            encoding: .plain
+        )
+
+        dictionaryPageOffset = result.startOffset
+
+        // Accumulate dictionary page size
+        let headerLength = result.bytesWritten - result.compressedSize
+        totalCompressedSize += Int64(result.compressedSize + headerLength)
+        totalUncompressedSize += Int64(result.uncompressedSize + headerLength)
+
+        usedEncodings.insert(.plain)  // Dictionary uses PLAIN
+        usedEncodings.insert(.rleDictionary)  // Data pages use RLE_DICTIONARY
+    }
+
+    private func encodeDataPage() throws -> (Data, Encoding) {
+        // Use dictionary encoding if available and beneficial
+        if let dictEncoder = dictionaryEncoder, dictEncoder.shouldUseDictionary {
+            let indicesData = dictEncoder.indicesData()
+            return (indicesData, .rleDictionary)
+        }
+
+        // Fall back to PLAIN encoding
+        let encoder = PlainEncoder<String>()
+        try encoder.encode(valueBuffer)
+        return (encoder.data, .plain)
     }
 
     func close() throws -> WriterColumnChunkMetadata {
@@ -422,11 +483,11 @@ public final class StringColumnWriter {
             column: column,
             fileOffset: 0,  // Per spec: 0 when metadata is in footer (deprecated field)
             dataPageOffset: dataPageOffset,
-            dictionaryPageOffset: nil,
+            dictionaryPageOffset: dictionaryPageOffset,
             numValues: totalValues,
             totalCompressedSize: totalCompressedSize,
             totalUncompressedSize: totalUncompressedSize,
-            encodings: [.plain],
+            encodings: Array(usedEncodings),
             codec: properties.compression(for: column.name)
         )
     }

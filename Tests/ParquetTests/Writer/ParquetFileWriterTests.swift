@@ -376,4 +376,132 @@ final class ParquetFileWriterTests: XCTestCase {
 
         XCTAssertEqual(readValues, testValues)
     }
+
+    // MARK: - W3 Tests - Dictionary Encoding
+
+    func testWriteAndReadStringColumnWithDictionaryEncoding() throws {
+        // Write String data with dictionary encoding and read it back
+        let url = temporaryFileURL()
+        defer { cleanupFile(url) }
+
+        // Create schema with String column
+        let nameColumn = SchemaElement(
+            name: "name",
+            elementType: .primitive(physicalType: .byteArray, logicalType: .string),
+            repetitionType: .required,
+            fieldId: nil,
+            children: [],
+            parent: nil,
+            depth: 1
+        )
+
+        let root = SchemaElement(
+            name: "schema",
+            elementType: .group(logicalType: nil),
+            repetitionType: .required,
+            fieldId: nil,
+            children: [nameColumn],
+            parent: nil,
+            depth: 0
+        )
+
+        let schema = Schema(root: root)
+
+        // Write data with dictionary encoding enabled (default)
+        let writer = try ParquetFileWriter(url: url)
+        try writer.setSchema(schema)
+
+        let rowGroup = try writer.createRowGroup()
+        let columnWriter = try rowGroup.stringColumnWriter(at: 0)
+
+        // Use repeated values to benefit from dictionary encoding
+        let testValues = ["Alice", "Bob", "Charlie", "Alice", "Bob", "Diana", "Alice", "Eve", "Bob", "Charlie"]
+        try columnWriter.writeValues(testValues)
+        try rowGroup.finalizeColumn(at: 0)
+
+        try writer.close()
+
+        // Read back and verify
+        let reader = try ParquetFileReader(url: url)
+        defer { try? reader.close() }
+
+        XCTAssertEqual(reader.metadata.numRows, Int64(testValues.count))
+        XCTAssertEqual(reader.metadata.numRowGroups, 1)
+
+        // Read back and verify values
+        let readRowGroup = try reader.rowGroup(at: 0)
+        let readColumn = try readRowGroup.stringColumn(at: 0)
+        let readValues = try readColumn.readAll()
+
+        // Verify all values were correctly written and read back with dictionary encoding
+        XCTAssertEqual(readValues, testValues)
+    }
+
+    func testWriteAndReadStringColumnWithMultiPageDictionaryEncoding() throws {
+        // Test dictionary encoding with multiple page flushes
+        // This verifies the bug fix: indices are cleared after each flush to prevent duplicates
+        let url = temporaryFileURL()
+        defer { cleanupFile(url) }
+
+        // Create schema with String column
+        let nameColumn = SchemaElement(
+            name: "name",
+            elementType: .primitive(physicalType: .byteArray, logicalType: .string),
+            repetitionType: .required,
+            fieldId: nil,
+            children: [],
+            parent: nil,
+            depth: 1
+        )
+
+        let root = SchemaElement(
+            name: "schema",
+            elementType: .group(logicalType: nil),
+            repetitionType: .required,
+            fieldId: nil,
+            children: [nameColumn],
+            parent: nil,
+            depth: 0
+        )
+
+        let schema = Schema(root: root)
+
+        // Write data with small page size to force multiple flushes
+        var properties = WriterProperties.default
+        properties.dataPageSize = 100  // Very small to force multiple pages
+
+        let writer = try ParquetFileWriter(url: url)
+        try writer.setSchema(schema)
+        writer.setProperties(properties)
+
+        let rowGroup = try writer.createRowGroup()
+        let columnWriter = try rowGroup.stringColumnWriter(at: 0)
+
+        // Write enough data to trigger multiple flushes (each name ~10-15 bytes with length prefix)
+        // With 100-byte page size, should get ~7-8 values per page
+        var testValues: [String] = []
+        let names = ["Alice", "Bob", "Charlie", "Diana", "Eve"]
+        for i in 0..<50 {  // 50 values = ~6-7 pages
+            testValues.append(names[i % names.count])
+        }
+
+        try columnWriter.writeValues(testValues)
+        try rowGroup.finalizeColumn(at: 0)
+
+        try writer.close()
+
+        // Read back and verify NO DUPLICATES
+        let reader = try ParquetFileReader(url: url)
+        defer { try? reader.close() }
+
+        XCTAssertEqual(reader.metadata.numRows, Int64(testValues.count), "Should have exactly 50 rows, not more")
+
+        let readRowGroup = try reader.rowGroup(at: 0)
+        let readColumn = try readRowGroup.stringColumn(at: 0)
+        let readValues = try readColumn.readAll()
+
+        // Critical: verify exact match, no duplicates
+        XCTAssertEqual(readValues.count, testValues.count, "Read count should match written count (no duplicates)")
+        XCTAssertEqual(readValues, testValues, "Values should match exactly")
+    }
 }
