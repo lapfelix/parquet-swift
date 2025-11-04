@@ -214,3 +214,70 @@ Completed milestones:
 
 Remaining priorities:
 7. **Complex nested types** (lists of structs, maps, nested structs) - Phase 4+
+
+---
+
+## Nested Structure Limitations (Phase 3)
+
+**Added**: 2025-11-03
+
+### ❌ CRITICAL: Structs Containing Complex Children
+
+**Status**: Not supported - throws error with workarounds
+
+**Problem**: Structs with complex children (maps, lists, nested structs) require multi-level reconstruction not yet implemented.
+
+**Example Schemas**:
+- `struct { string name; map<string,int> attrs; }`
+- `struct { int32 id; list<string> tags; }`
+- `struct { struct inner { ... } }`
+
+**Behavior**:
+- ❌ `readStruct()` throws `unsupportedType` error
+- ❌ `readRepeatedStruct()` throws `unsupportedType` error
+- ✅ Clear error message with workarounds
+
+**Error Message**:
+```
+Structs containing complex fields (maps, lists, nested structs) are not yet supported.
+
+Workarounds:
+1. Read maps directly: readMap(at: ["your_struct", "map_field"])
+2. Read lists directly: readRepeatedStruct(at: ["your_struct", "list_field", "list", "element"])
+3. Read primitive fields individually via column readers
+
+This limitation will be removed once proper multi-level reconstruction (LevelInfo) is implemented.
+```
+
+**When This Will Be Fixed**: Phase 4 - Port Arrow C++'s `DefRepLevelsToListInfo` for proper multi-level reconstruction
+
+### ⚠️ list<map> - Flattens Intermediate Dimension
+
+**Status**: Partial support - reads but loses structure
+
+**Problem**: Loses intermediate list dimension, merges maps
+
+**Example**: `[[{a:1},{b:2}], [{c:3}]]` → `[[{a:1, b:2}], [{c:3}]]` (2 maps in first list merged into 1)
+
+**Workaround**: None - requires LevelInfo port
+
+**When This Will Be Fixed**: Phase 4 - Proper multi-level repetition support
+
+### Implementation Details
+
+See `docs/map-bugs-exposed.md` for:
+- Detailed technical analysis
+- Test coverage
+- Future LevelInfo implementation plan
+
+### What DOES Work
+
+- ✅ Root-level maps: `map<primitive, primitive>`
+- ✅ Flat structs: primitives only
+- ✅ Simple `list<struct>`: primitives only  
+- ✅ Multi-level lists: `list<list<T>>`
+
+---
+
+**For complete details and examples**: See above sections in this document.
+

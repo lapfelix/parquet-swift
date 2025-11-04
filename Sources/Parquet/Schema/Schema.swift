@@ -355,6 +355,104 @@ extension Schema {
             return columnPath.starts(with: fullPath) && columnPath.count > fullPath.count
         }
     }
+
+    /// Returns the path to the key_value struct for a map
+    ///
+    /// - Parameter path: Path to the map (e.g., ["attributes"])
+    /// - Returns: Path to the repeated key_value struct, or nil if not a map
+    ///
+    /// # Example
+    ///
+    /// ```swift
+    /// // For map: attributes (MAP) { key_value { key: string, value: int64 } }
+    /// if let kvPath = schema.mapKeyValuePath(at: ["attributes"]) {
+    ///     // kvPath = ["attributes", "key_value"]
+    /// }
+    /// ```
+    ///
+    /// # Map Structure
+    ///
+    /// Maps in Parquet are encoded as:
+    /// ```
+    /// optional group map_field (MAP) {
+    ///   repeated group key_value {
+    ///     required/optional key;
+    ///     required/optional value;
+    ///   }
+    /// }
+    /// ```
+    ///
+    /// This method returns the path to the repeated `key_value` struct,
+    /// which can then be read as a repeated struct using standard struct reading logic.
+    public func mapKeyValuePath(at path: [String]) -> [String]? {
+        guard let mapElement = element(at: path), mapElement.isMap else {
+            return nil
+        }
+
+        // Map structure: map_field (MAP) → key_value (repeated group) → key, value
+        // Find the repeated key_value group
+        guard let keyValueGroup = mapElement.children.first(where: { $0.repetitionType == .repeated }) else {
+            return nil
+        }
+
+        // Return path to the key_value struct
+        return path + [keyValueGroup.name]
+    }
+
+    /// Returns key and value columns of a map
+    ///
+    /// - Parameter path: Path to the map (e.g., ["attributes"])
+    /// - Returns: Tuple of (keyColumn, valueColumn), or nil if not a map
+    ///
+    /// # Example
+    ///
+    /// ```swift
+    /// // For map: attributes (MAP) { key_value { key: string, value: int64 } }
+    /// if let (keyCol, valueCol) = schema.mapFields(at: ["attributes"]) {
+    ///     // keyCol.path = ["attributes", "key_value", "key"]
+    ///     // valueCol.path = ["attributes", "key_value", "value"]
+    /// }
+    /// ```
+    ///
+    /// # Map Structure
+    ///
+    /// Maps in Parquet follow this structure:
+    /// ```
+    /// optional group map_field (MAP) {
+    ///   repeated group key_value {
+    ///     required/optional key;
+    ///     required/optional value;
+    ///   }
+    /// }
+    /// ```
+    public func mapFields(at path: [String]) -> (keyColumn: Column, valueColumn: Column)? {
+        guard let mapElement = element(at: path), mapElement.isMap else {
+            return nil
+        }
+
+        // Map structure: map_field (MAP) → key_value (repeated group) → key, value
+        // Find the repeated key_value group
+        guard let keyValueGroup = mapElement.children.first(where: { $0.repetitionType == .repeated }) else {
+            return nil
+        }
+
+        // Find key and value children
+        guard let keyElement = keyValueGroup.child(named: "key"),
+              let valueElement = keyValueGroup.child(named: "value") else {
+            return nil
+        }
+
+        // Find the corresponding columns
+        let keyPath = path + [keyValueGroup.name, keyElement.name]
+        let valuePath = path + [keyValueGroup.name, valueElement.name]
+
+        guard let keyColumn = columns.first(where: { $0.path == keyPath }),
+              let valueColumn = columns.first(where: { $0.path == valuePath }) else {
+            return nil
+        }
+
+        return (keyColumn, valueColumn)
+    }
 }
 
 extension Schema: CustomStringConvertible {

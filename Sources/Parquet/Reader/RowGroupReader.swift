@@ -9,6 +9,7 @@ public enum RowGroupReaderError: Error {
     case columnIndexOutOfBounds(Int, available: Int)
     case typeMismatch(expected: String, actual: String)
     case unsupportedType(String)
+    case internalError(String)
 }
 
 /// Reader for a single row group in a Parquet file.

@@ -244,7 +244,7 @@ public final class Int32ColumnReader {
         return .some(value)  // Present value
     }
 
-    // MARK: - Internal API for Struct Reading
+    // MARK: - Internal API for Struct and Map Reading
 
     /// Read all values and definition levels (internal API for struct reading)
     ///
@@ -309,6 +309,82 @@ public final class Int32ColumnReader {
         }
 
         return (values, defLevels)
+    }
+
+    /// Read all values, definition levels, and repetition levels (internal API for map reading)
+    ///
+    /// This method walks through all pages once, collecting values (with nil for NULLs),
+    /// definition levels, and repetition levels in parallel.
+    ///
+    /// - Returns: Tuple of (values, definition levels, repetition levels)
+    /// - Throws: `ColumnReaderError` if reading fails
+    internal func readAllWithAllLevels() throws -> (values: [Int32?], definitionLevels: [UInt16], repetitionLevels: [UInt16]) {
+        var values: [Int32?] = []
+        var defLevels: [UInt16] = []
+        var repLevels: [UInt16] = []
+
+        // Read through all pages
+        while try loadPageIfNeeded() {
+            let numValuesInPage = currentPage!.numValues
+
+            // Process each value in the page
+            for _ in 0..<numValuesInPage {
+                // Get definition level for this value position
+                let defLevel: UInt16
+                if let currentDefLevels = currentDefinitionLevels {
+                    defLevel = currentDefLevels[valuesReadFromPage]
+                } else {
+                    // No definition levels means required (non-nullable) column
+                    defLevel = UInt16(maxDefinitionLevel)
+                }
+
+                // Get repetition level
+                let repLevel: UInt16
+                if let currentRepLevels = currentRepetitionLevels {
+                    repLevel = currentRepLevels[valuesReadFromPage]
+                } else {
+                    // No repetition levels means non-repeated column
+                    repLevel = 0
+                }
+
+                defLevels.append(defLevel)
+                repLevels.append(repLevel)
+
+                // Check if value is NULL or present
+                if defLevel < maxDefinitionLevel {
+                    // Value is NULL
+                    values.append(nil)
+                    valuesReadFromPage += 1
+                } else {
+                    // Value is present - decode it
+                    let value: Int32
+                    if let decoder = currentDecoder {
+                        // PLAIN encoding
+                        value = try decoder.decodeOne()
+                    } else if let indices = currentIndices, let dict = dictionary {
+                        // Dictionary encoding
+                        value = try dict.value(at: indices[nonNullValuesRead])
+                    } else {
+                        throw ColumnReaderError.internalError("No decoder or indices available")
+                    }
+
+                    values.append(value)
+                    valuesReadFromPage += 1
+                    nonNullValuesRead += 1
+                }
+            }
+
+            // Page exhausted - reset for next page
+            currentPage = nil
+            currentDecoder = nil
+            currentIndices = nil
+            currentDefinitionLevels = nil
+            currentRepetitionLevels = nil
+            valuesReadFromPage = 0
+            nonNullValuesRead = 0
+        }
+
+        return (values, defLevels, repLevels)
     }
 
     // MARK: - Public Reading API

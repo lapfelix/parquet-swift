@@ -316,6 +316,53 @@ public final class DoubleColumnReader {
         return (values, defLevels)
     }
 
+    /// Read all values, definition levels, and repetition levels (internal API for map reading)
+    internal func readAllWithAllLevels() throws -> (values: [Double?], definitionLevels: [UInt16], repetitionLevels: [UInt16]) {
+        var values: [Double?] = []
+        var defLevels: [UInt16] = []
+        var repLevels: [UInt16] = []
+
+        while try loadPageIfNeeded() {
+            let numValuesInPage = currentPage!.numValues
+
+            for _ in 0..<numValuesInPage {
+                let defLevel: UInt16 = currentDefinitionLevels?[valuesReadFromPage] ?? UInt16(maxDefinitionLevel)
+                let repLevel: UInt16 = currentRepetitionLevels?[valuesReadFromPage] ?? 0
+
+                defLevels.append(defLevel)
+                repLevels.append(repLevel)
+
+                if defLevel < maxDefinitionLevel {
+                    values.append(nil)
+                    valuesReadFromPage += 1
+                } else {
+                    let value: Double
+                    if let decoder = currentDecoder {
+                        value = try decoder.decodeOne()
+                    } else if let indices = currentIndices, let dict = dictionary {
+                        value = try dict.value(at: indices[nonNullValuesRead])
+                    } else {
+                        throw ColumnReaderError.internalError("No decoder or indices available")
+                    }
+
+                    values.append(value)
+                    valuesReadFromPage += 1
+                    nonNullValuesRead += 1
+                }
+            }
+
+            currentPage = nil
+            currentDecoder = nil
+            currentIndices = nil
+            currentDefinitionLevels = nil
+            currentRepetitionLevels = nil
+            valuesReadFromPage = 0
+            nonNullValuesRead = 0
+        }
+
+        return (values, defLevels, repLevels)
+    }
+
     /// Read all remaining values for a repeated column (returns nested arrays)
     ///
     /// This method is for columns with `maxRepetitionLevel > 0` (repeated fields).

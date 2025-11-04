@@ -29,10 +29,26 @@ Current implementation supports:
 - ✅ **Nullable columns (definition level support)** ✨
 - ✅ All primitive types: Int32, Int64, Float, Double, String
 - ✅ **Repeated columns (single-level arrays/lists)** ✨
-- ✅ **Multi-level nested lists (lists of lists)** ✨ NEW!
-- ❌ Maps and structs (nested non-list types)
+- ✅ **Multi-level nested lists (lists of lists)** ✨
+- ✅ **Maps** (`map<primitive, primitive>`) ✨ NEW!
+- ✅ **Structs** (flat structs with primitive fields) ✨ NEW!
+- ⚠️ **Nested maps/structs** - Partial support with known limitations
 
-See [docs/limitations.md](docs/limitations.md) for complete details and workarounds.
+**Important Nested Structure Limitations:**
+- ❌ **Structs containing complex children**: Not supported - throws clear error with workarounds
+  - `struct { map }`, `struct { list }`, `struct { struct }` → Use `readMap()` or read fields individually
+- ⚠️ **list<map>**: Reads but flattens intermediate list dimension (loses structure)
+- ⚠️ **Multi-level repetition**: Only `repLevel ≤ 1` fully supported
+
+**What Works:**
+- ✅ Root-level maps: `map<primitive, primitive>`
+- ✅ Flat structs: primitives only
+- ✅ Simple `list<struct>`: primitives only
+- ✅ Multi-level lists: `list<list<T>>`
+
+**Fail-Fast Approach**: Rather than returning incomplete/truncated data for complex nested structures, the library throws clear errors with workarounds. This will be fully supported once multi-level reconstruction (LevelInfo) is implemented.
+
+See [docs/limitations.md](docs/limitations.md) for complete details, examples, and workarounds.
 
 ### ⚠️ Pre-1.0 API Changes
 
