@@ -48,3 +48,6 @@ project.xcworkspace/
 # Documentation build
 .docc-build/
 fixture_analysis_report.md
+
+# Development reference (optional)
+third_party/arrow/

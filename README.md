@@ -322,6 +322,22 @@ swift test --filter PyArrowValidationTests.testGenerateAllValidationFiles
 python3 Tests/ParquetTests/Fixtures/validate_with_pyarrow.py /path/to/validation-files
 ```
 
+### Developer Setup (Optional)
+
+The Apache Arrow C++ implementation serves as a reference during development but is **not required** for building or testing. To keep the package lean, the C++ code is excluded from the repository.
+
+**For contributors who want the C++ reference:**
+
+```bash
+# Clone Apache Arrow C++ reference code (main branch)
+./scripts/setup-dev.sh
+
+# Remove reference code when no longer needed
+./scripts/cleanup-dev.sh
+```
+
+The reference code will be cloned to `third_party/arrow/cpp/src/parquet/`. All documentation already links to GitHub, so this is entirely optional.
+
 ## Architecture
 
 ### Design Principles

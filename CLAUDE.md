@@ -50,6 +50,24 @@ All dependencies are pure Swift and managed by Swift Package Manager:
 - **Snappy**: Pure Swift implementation ([snappy-swift](https://github.com/codelynx/snappy-swift))
 - **GZIP**: Built-in Foundation framework
 
+### Developer Setup (Optional)
+
+The Apache Arrow C++ implementation is used as a reference during development but is **NOT required** for building or testing. The repository excludes it to keep the package size small.
+
+**To optionally clone the Arrow C++ reference code:**
+```bash
+./scripts/setup-dev.sh
+```
+
+This clones the Apache Arrow repository (main branch) to `third_party/arrow/`. The C++ implementation at `third_party/arrow/cpp/src/parquet/` can be referenced while developing.
+
+**To remove the reference code:**
+```bash
+./scripts/cleanup-dev.sh
+```
+
+**Note:** All documentation links point to the Apache Arrow GitHub repository, so the reference code is not strictly necessary.
+
 ## Architecture
 
 ### Core Design Principles
