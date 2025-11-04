@@ -577,4 +577,274 @@ final class ParquetFileWriterTests: XCTestCase {
             XCTAssertEqual(actual, expected, "Value at index \(index) should match (including nulls)")
         }
     }
+
+    // MARK: - W5 Tests - Nullable Primitive Types
+
+    func testRLEEncoderExactlyMinRepeatCount() throws {
+        // Regression test for RLE encoder bug: exactly minRepeatCount (8) consecutive
+        // values should not duplicate the first value
+        let url = temporaryFileURL()
+        defer { cleanupFile(url) }
+
+        let column = SchemaElement(
+            name: "value",
+            elementType: .primitive(physicalType: .int32, logicalType: nil),
+            repetitionType: .optional,
+            fieldId: nil,
+            children: [],
+            parent: nil,
+            depth: 1
+        )
+
+        let root = SchemaElement(
+            name: "schema",
+            elementType: .group(logicalType: nil),
+            repetitionType: .required,
+            fieldId: nil,
+            children: [column],
+            parent: nil,
+            depth: 0
+        )
+
+        let schema = Schema(root: root)
+
+        let writer = try ParquetFileWriter(url: url)
+        try writer.setSchema(schema)
+
+        let rowGroup = try writer.createRowGroup()
+        let columnWriter = try rowGroup.int32ColumnWriter(at: 0)
+
+        // Exactly 8 values (minRepeatCount for RLE) - all present (defLevel=1)
+        // This tests the edge case where consecutiveCount == minRepeatCount
+        let testValues: [Int32?] = [1, 1, 1, 1, 1, 1, 1, 1]
+        try columnWriter.writeOptionalValues(testValues)
+        try rowGroup.finalizeColumn(at: 0)
+        try writer.close()
+
+        // Read back - should get exactly 8 values, not 9
+        let reader = try ParquetFileReader(url: url)
+        defer { try? reader.close() }
+
+        XCTAssertEqual(reader.metadata.numRows, 8, "Should have exactly 8 rows, not 9")
+
+        let readRowGroup = try reader.rowGroup(at: 0)
+        let readColumn = try readRowGroup.int32Column(at: 0)
+        let readValues = try readColumn.readAll()
+
+        XCTAssertEqual(readValues.count, 8, "Should read exactly 8 values, not 9")
+        XCTAssertTrue(readValues.allSatisfy { $0 == 1 }, "All values should be 1")
+    }
+
+    func testWriteAndReadNullableInt32Column() throws {
+        let url = temporaryFileURL()
+        defer { cleanupFile(url) }
+
+        // Schema with OPTIONAL Int32 column
+        let column = SchemaElement(
+            name: "value",
+            elementType: .primitive(physicalType: .int32, logicalType: nil),
+            repetitionType: .optional,
+            fieldId: nil,
+            children: [],
+            parent: nil,
+            depth: 1
+        )
+
+        let root = SchemaElement(
+            name: "schema",
+            elementType: .group(logicalType: nil),
+            repetitionType: .required,
+            fieldId: nil,
+            children: [column],
+            parent: nil,
+            depth: 0
+        )
+
+        let schema = Schema(root: root)
+
+        let writer = try ParquetFileWriter(url: url)
+        try writer.setSchema(schema)
+
+        let rowGroup = try writer.createRowGroup()
+        let columnWriter = try rowGroup.int32ColumnWriter(at: 0)
+
+        let testValues: [Int32?] = [1, nil, 3, 4, nil, nil, 7, 8]
+        try columnWriter.writeOptionalValues(testValues)
+        try rowGroup.finalizeColumn(at: 0)
+        try writer.close()
+
+        // Read back
+        let reader = try ParquetFileReader(url: url)
+        defer { try? reader.close() }
+
+        let readRowGroup = try reader.rowGroup(at: 0)
+        let readColumn = try readRowGroup.int32Column(at: 0)
+        let readValues = try readColumn.readAll()
+
+        XCTAssertEqual(readValues.count, testValues.count)
+        for (index, (expected, actual)) in zip(testValues, readValues).enumerated() {
+            XCTAssertEqual(actual, expected, "Int32 value at index \(index) should match")
+        }
+    }
+
+    func testWriteAndReadNullableInt64Column() throws {
+        let url = temporaryFileURL()
+        defer { cleanupFile(url) }
+
+        let column = SchemaElement(
+            name: "value",
+            elementType: .primitive(physicalType: .int64, logicalType: nil),
+            repetitionType: .optional,
+            fieldId: nil,
+            children: [],
+            parent: nil,
+            depth: 1
+        )
+
+        let root = SchemaElement(
+            name: "schema",
+            elementType: .group(logicalType: nil),
+            repetitionType: .required,
+            fieldId: nil,
+            children: [column],
+            parent: nil,
+            depth: 0
+        )
+
+        let schema = Schema(root: root)
+
+        let writer = try ParquetFileWriter(url: url)
+        try writer.setSchema(schema)
+
+        let rowGroup = try writer.createRowGroup()
+        let columnWriter = try rowGroup.int64ColumnWriter(at: 0)
+
+        let testValues: [Int64?] = [100, nil, 300, 400, nil, nil, 700, 800]
+        try columnWriter.writeOptionalValues(testValues)
+        try rowGroup.finalizeColumn(at: 0)
+        try writer.close()
+
+        // Read back
+        let reader = try ParquetFileReader(url: url)
+        defer { try? reader.close() }
+
+        let readRowGroup = try reader.rowGroup(at: 0)
+        let readColumn = try readRowGroup.int64Column(at: 0)
+        let readValues = try readColumn.readAll()
+
+        XCTAssertEqual(readValues.count, testValues.count)
+        for (index, (expected, actual)) in zip(testValues, readValues).enumerated() {
+            XCTAssertEqual(actual, expected, "Int64 value at index \(index) should match")
+        }
+    }
+
+    func testWriteAndReadNullableFloatColumn() throws {
+        let url = temporaryFileURL()
+        defer { cleanupFile(url) }
+
+        let column = SchemaElement(
+            name: "value",
+            elementType: .primitive(physicalType: .float, logicalType: nil),
+            repetitionType: .optional,
+            fieldId: nil,
+            children: [],
+            parent: nil,
+            depth: 1
+        )
+
+        let root = SchemaElement(
+            name: "schema",
+            elementType: .group(logicalType: nil),
+            repetitionType: .required,
+            fieldId: nil,
+            children: [column],
+            parent: nil,
+            depth: 0
+        )
+
+        let schema = Schema(root: root)
+
+        let writer = try ParquetFileWriter(url: url)
+        try writer.setSchema(schema)
+
+        let rowGroup = try writer.createRowGroup()
+        let columnWriter = try rowGroup.floatColumnWriter(at: 0)
+
+        let testValues: [Float?] = [1.1, nil, 3.3, 4.4, nil, nil, 7.7, 8.8]
+        try columnWriter.writeOptionalValues(testValues)
+        try rowGroup.finalizeColumn(at: 0)
+        try writer.close()
+
+        // Read back
+        let reader = try ParquetFileReader(url: url)
+        defer { try? reader.close() }
+
+        let readRowGroup = try reader.rowGroup(at: 0)
+        let readColumn = try readRowGroup.floatColumn(at: 0)
+        let readValues = try readColumn.readAll()
+
+        XCTAssertEqual(readValues.count, testValues.count)
+        for (index, (expected, actual)) in zip(testValues, readValues).enumerated() {
+            if let expectedValue = expected, let actualValue = actual {
+                XCTAssertEqual(actualValue, expectedValue, accuracy: 0.001, "Float value at index \(index) should match")
+            } else {
+                XCTAssertEqual(actual, expected, "Float null status at index \(index) should match")
+            }
+        }
+    }
+
+    func testWriteAndReadNullableDoubleColumn() throws {
+        let url = temporaryFileURL()
+        defer { cleanupFile(url) }
+
+        let column = SchemaElement(
+            name: "value",
+            elementType: .primitive(physicalType: .double, logicalType: nil),
+            repetitionType: .optional,
+            fieldId: nil,
+            children: [],
+            parent: nil,
+            depth: 1
+        )
+
+        let root = SchemaElement(
+            name: "schema",
+            elementType: .group(logicalType: nil),
+            repetitionType: .required,
+            fieldId: nil,
+            children: [column],
+            parent: nil,
+            depth: 0
+        )
+
+        let schema = Schema(root: root)
+
+        let writer = try ParquetFileWriter(url: url)
+        try writer.setSchema(schema)
+
+        let rowGroup = try writer.createRowGroup()
+        let columnWriter = try rowGroup.doubleColumnWriter(at: 0)
+
+        let testValues: [Double?] = [1.11, nil, 3.33, 4.44, nil, nil, 7.77, 8.88]
+        try columnWriter.writeOptionalValues(testValues)
+        try rowGroup.finalizeColumn(at: 0)
+        try writer.close()
+
+        // Read back
+        let reader = try ParquetFileReader(url: url)
+        defer { try? reader.close() }
+
+        let readRowGroup = try reader.rowGroup(at: 0)
+        let readColumn = try readRowGroup.doubleColumn(at: 0)
+        let readValues = try readColumn.readAll()
+
+        XCTAssertEqual(readValues.count, testValues.count)
+        for (index, (expected, actual)) in zip(testValues, readValues).enumerated() {
+            if let expectedValue = expected, let actualValue = actual {
+                XCTAssertEqual(actualValue, expectedValue, accuracy: 0.001, "Double value at index \(index) should match")
+            } else {
+                XCTAssertEqual(actual, expected, "Double null status at index \(index) should match")
+            }
+        }
+    }
 }

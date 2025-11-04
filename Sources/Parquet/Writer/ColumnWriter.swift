@@ -14,25 +14,33 @@ public final class Int32ColumnWriter {
     private let properties: WriterProperties
     private let pageWriter: PageWriter
     private var valueBuffer: [Int32] = []
+    private var definitionLevelBuffer: [UInt16] = []  // W5: Track nulls (0=null, 1=present)
     private var totalValues: Int64 = 0
     private let columnStartOffset: Int64
+    private let isNullable: Bool
 
     // Track metadata for column chunk
     private var dataPageOffset: Int64?
     private var totalCompressedSize: Int64 = 0
     private var totalUncompressedSize: Int64 = 0
+    private var usedEncodings: Set<Encoding> = []
 
     init(column: Column, properties: WriterProperties, pageWriter: PageWriter, startOffset: Int64) {
         self.column = column
         self.properties = properties
         self.pageWriter = pageWriter
         self.columnStartOffset = startOffset
+        self.isNullable = !column.isRequired
     }
 
-    /// Write a batch of Int32 values
+    /// Write a batch of Int32 values (for required columns)
     /// - Parameter values: Values to write
     /// - Throws: WriterError if write fails
     public func writeValues(_ values: [Int32]) throws {
+        guard !isNullable else {
+            throw WriterError.invalidState("Column \(column.name) is nullable, use writeOptionalValues()")
+        }
+
         valueBuffer.append(contentsOf: values)
         totalValues += Int64(values.count)
 
@@ -42,22 +50,67 @@ public final class Int32ColumnWriter {
         }
     }
 
+    /// Write a batch of optional Int32 values (for nullable columns)
+    /// - Parameter values: Array of optional Int32s (nil = null)
+    /// - Throws: WriterError if write fails
+    public func writeOptionalValues(_ values: [Int32?]) throws {
+        guard isNullable else {
+            throw WriterError.invalidState("Column \(column.name) is required, use writeValues()")
+        }
+
+        // Encode definition levels and non-null values
+        for value in values {
+            if let nonNullValue = value {
+                // Present value: def level = 1
+                definitionLevelBuffer.append(1)
+                valueBuffer.append(nonNullValue)
+            } else {
+                // Null value: def level = 0
+                definitionLevelBuffer.append(0)
+                // No value added to valueBuffer
+            }
+        }
+
+        totalValues += Int64(values.count)
+
+        if shouldFlush() {
+            try flush()
+        }
+    }
+
     /// Flush any buffered values to disk
     /// - Throws: WriterError if flush fails
     func flush() throws {
-        guard !valueBuffer.isEmpty else {
+        // For nullable columns, allow flush if we have definition levels (even with no values)
+        // For required columns, need at least one value
+        guard !valueBuffer.isEmpty || (isNullable && !definitionLevelBuffer.isEmpty) else {
             return
+        }
+
+        // Encode definition levels if column is nullable
+        let definitionLevelsData: Data?
+        if isNullable {
+            let encoder = LevelEncoder(maxLevel: 1)  // maxLevel=1 for optional columns
+            encoder.encode(definitionLevelBuffer)
+            definitionLevelsData = encoder.flush()
+            usedEncodings.insert(.rle)  // Track RLE encoding used for definition levels
+        } else {
+            definitionLevelsData = nil
         }
 
         // Encode values using PLAIN encoding
         let encoder = PlainEncoder<Int32>()
         encoder.encode(valueBuffer)
 
+        // Number of values = total rows (including nulls for nullable columns)
+        let numValues = Int32(isNullable ? definitionLevelBuffer.count : valueBuffer.count)
+
         // Write data page and capture result
         let result = try pageWriter.writeDataPage(
             values: encoder.data,
-            numValues: Int32(valueBuffer.count),
-            encoding: .plain
+            numValues: numValues,
+            encoding: .plain,
+            definitionLevels: definitionLevelsData
         )
 
         // Track first data page offset
@@ -70,8 +123,11 @@ public final class Int32ColumnWriter {
         totalCompressedSize += Int64(result.compressedSize + headerLength)
         totalUncompressedSize += Int64(result.uncompressedSize + headerLength)
 
-        // Clear buffer
+        usedEncodings.insert(.plain)
+
+        // Clear buffers
         valueBuffer.removeAll(keepingCapacity: true)
+        definitionLevelBuffer.removeAll(keepingCapacity: true)
     }
 
     /// Close the column writer (flush any remaining data)
@@ -94,14 +150,23 @@ public final class Int32ColumnWriter {
             numValues: totalValues,
             totalCompressedSize: totalCompressedSize,
             totalUncompressedSize: totalUncompressedSize,
-            encodings: [.plain],
+            encodings: Array(usedEncodings),
             codec: properties.compression(for: column.name)
         )
     }
 
     private func shouldFlush() -> Bool {
-        let estimatedSize = valueBuffer.count * 4  // 4 bytes per Int32
-        return estimatedSize >= properties.dataPageSize
+        if isNullable {
+            // For nullable columns, check both value buffer and definition level buffer
+            let valueSize = valueBuffer.count * 4  // 4 bytes per Int32
+            // Definition levels: conservative estimate (4-byte length + ~1 bit per level)
+            let defLevelSize = 4 + (definitionLevelBuffer.count + 7) / 8
+            let estimatedSize = valueSize + defLevelSize
+            return estimatedSize >= properties.dataPageSize
+        } else {
+            let estimatedSize = valueBuffer.count * 4  // 4 bytes per Int32
+            return estimatedSize >= properties.dataPageSize
+        }
     }
 }
 
@@ -113,21 +178,29 @@ public final class Int64ColumnWriter {
     private let properties: WriterProperties
     private let pageWriter: PageWriter
     private var valueBuffer: [Int64] = []
+    private var definitionLevelBuffer: [UInt16] = []  // W5: Track nulls
     private var totalValues: Int64 = 0
     private let columnStartOffset: Int64
+    private let isNullable: Bool
     private var dataPageOffset: Int64?
     private var totalCompressedSize: Int64 = 0
     private var totalUncompressedSize: Int64 = 0
+    private var usedEncodings: Set<Encoding> = []
 
     init(column: Column, properties: WriterProperties, pageWriter: PageWriter, startOffset: Int64) {
         self.column = column
         self.properties = properties
         self.pageWriter = pageWriter
         self.columnStartOffset = startOffset
+        self.isNullable = !column.isRequired
     }
 
-    /// Write a batch of Int64 values
+    /// Write a batch of Int64 values (for required columns)
     public func writeValues(_ values: [Int64]) throws {
+        guard !isNullable else {
+            throw WriterError.invalidState("Column \(column.name) is nullable, use writeOptionalValues()")
+        }
+
         valueBuffer.append(contentsOf: values)
         totalValues += Int64(values.count)
 
@@ -136,30 +209,68 @@ public final class Int64ColumnWriter {
         }
     }
 
+    /// Write a batch of optional Int64 values (for nullable columns)
+    public func writeOptionalValues(_ values: [Int64?]) throws {
+        guard isNullable else {
+            throw WriterError.invalidState("Column \(column.name) is required, use writeValues()")
+        }
+
+        for value in values {
+            if let nonNullValue = value {
+                definitionLevelBuffer.append(1)
+                valueBuffer.append(nonNullValue)
+            } else {
+                definitionLevelBuffer.append(0)
+            }
+        }
+
+        totalValues += Int64(values.count)
+
+        if shouldFlush() {
+            try flush()
+        }
+    }
+
     func flush() throws {
-        guard !valueBuffer.isEmpty else {
+        guard !valueBuffer.isEmpty || (isNullable && !definitionLevelBuffer.isEmpty) else {
             return
+        }
+
+        // Encode definition levels if column is nullable
+        let definitionLevelsData: Data?
+        if isNullable {
+            let encoder = LevelEncoder(maxLevel: 1)
+            encoder.encode(definitionLevelBuffer)
+            definitionLevelsData = encoder.flush()
+            usedEncodings.insert(.rle)
+        } else {
+            definitionLevelsData = nil
         }
 
         let encoder = PlainEncoder<Int64>()
         encoder.encode(valueBuffer)
 
+        let numValues = Int32(isNullable ? definitionLevelBuffer.count : valueBuffer.count)
+
         let result = try pageWriter.writeDataPage(
             values: encoder.data,
-            numValues: Int32(valueBuffer.count),
-            encoding: .plain
+            numValues: numValues,
+            encoding: .plain,
+            definitionLevels: definitionLevelsData
         )
 
         if dataPageOffset == nil {
             dataPageOffset = result.startOffset
         }
 
-        // Accumulate sizes (including page headers per Parquet spec)
         let headerLength = result.bytesWritten - result.compressedSize
         totalCompressedSize += Int64(result.compressedSize + headerLength)
         totalUncompressedSize += Int64(result.uncompressedSize + headerLength)
 
+        usedEncodings.insert(.plain)
+
         valueBuffer.removeAll(keepingCapacity: true)
+        definitionLevelBuffer.removeAll(keepingCapacity: true)
     }
 
     func close() throws -> WriterColumnChunkMetadata {
@@ -171,20 +282,29 @@ public final class Int64ColumnWriter {
 
         return WriterColumnChunkMetadata(
             column: column,
-            fileOffset: 0,  // Per spec: 0 when metadata is in footer (deprecated field)
+            fileOffset: 0,
             dataPageOffset: dataPageOffset,
             dictionaryPageOffset: nil,
             numValues: totalValues,
             totalCompressedSize: totalCompressedSize,
             totalUncompressedSize: totalUncompressedSize,
-            encodings: [.plain],
+            encodings: Array(usedEncodings),
             codec: properties.compression(for: column.name)
         )
     }
 
     private func shouldFlush() -> Bool {
-        let estimatedSize = valueBuffer.count * 8  // 8 bytes per Int64
-        return estimatedSize >= properties.dataPageSize
+        if isNullable {
+            // For nullable columns, check both value buffer and definition level buffer
+            let valueSize = valueBuffer.count * 8  // 8 bytes per Int64
+            // Definition levels: conservative estimate (4-byte length + ~1 bit per level)
+            let defLevelSize = 4 + (definitionLevelBuffer.count + 7) / 8
+            let estimatedSize = valueSize + defLevelSize
+            return estimatedSize >= properties.dataPageSize
+        } else {
+            let estimatedSize = valueBuffer.count * 8  // 8 bytes per Int64
+            return estimatedSize >= properties.dataPageSize
+        }
     }
 }
 
@@ -196,21 +316,29 @@ public final class FloatColumnWriter {
     private let properties: WriterProperties
     private let pageWriter: PageWriter
     private var valueBuffer: [Float] = []
+    private var definitionLevelBuffer: [UInt16] = []  // W5: Track nulls
     private var totalValues: Int64 = 0
     private let columnStartOffset: Int64
+    private let isNullable: Bool
     private var dataPageOffset: Int64?
     private var totalCompressedSize: Int64 = 0
     private var totalUncompressedSize: Int64 = 0
+    private var usedEncodings: Set<Encoding> = []
 
     init(column: Column, properties: WriterProperties, pageWriter: PageWriter, startOffset: Int64) {
         self.column = column
         self.properties = properties
         self.pageWriter = pageWriter
         self.columnStartOffset = startOffset
+        self.isNullable = !column.isRequired
     }
 
-    /// Write a batch of Float values
+    /// Write a batch of Float values (for required columns)
     public func writeValues(_ values: [Float]) throws {
+        guard !isNullable else {
+            throw WriterError.invalidState("Column \(column.name) is nullable, use writeOptionalValues()")
+        }
+
         valueBuffer.append(contentsOf: values)
         totalValues += Int64(values.count)
 
@@ -219,30 +347,68 @@ public final class FloatColumnWriter {
         }
     }
 
+    /// Write a batch of optional Float values (for nullable columns)
+    public func writeOptionalValues(_ values: [Float?]) throws {
+        guard isNullable else {
+            throw WriterError.invalidState("Column \(column.name) is required, use writeValues()")
+        }
+
+        for value in values {
+            if let nonNullValue = value {
+                definitionLevelBuffer.append(1)
+                valueBuffer.append(nonNullValue)
+            } else {
+                definitionLevelBuffer.append(0)
+            }
+        }
+
+        totalValues += Int64(values.count)
+
+        if shouldFlush() {
+            try flush()
+        }
+    }
+
     func flush() throws {
-        guard !valueBuffer.isEmpty else {
+        guard !valueBuffer.isEmpty || (isNullable && !definitionLevelBuffer.isEmpty) else {
             return
+        }
+
+        // Encode definition levels if column is nullable
+        let definitionLevelsData: Data?
+        if isNullable {
+            let encoder = LevelEncoder(maxLevel: 1)
+            encoder.encode(definitionLevelBuffer)
+            definitionLevelsData = encoder.flush()
+            usedEncodings.insert(.rle)
+        } else {
+            definitionLevelsData = nil
         }
 
         let encoder = PlainEncoder<Float>()
         encoder.encode(valueBuffer)
 
+        let numValues = Int32(isNullable ? definitionLevelBuffer.count : valueBuffer.count)
+
         let result = try pageWriter.writeDataPage(
             values: encoder.data,
-            numValues: Int32(valueBuffer.count),
-            encoding: .plain
+            numValues: numValues,
+            encoding: .plain,
+            definitionLevels: definitionLevelsData
         )
 
         if dataPageOffset == nil {
             dataPageOffset = result.startOffset
         }
 
-        // Accumulate sizes (including page headers per Parquet spec)
         let headerLength = result.bytesWritten - result.compressedSize
         totalCompressedSize += Int64(result.compressedSize + headerLength)
         totalUncompressedSize += Int64(result.uncompressedSize + headerLength)
 
+        usedEncodings.insert(.plain)
+
         valueBuffer.removeAll(keepingCapacity: true)
+        definitionLevelBuffer.removeAll(keepingCapacity: true)
     }
 
     func close() throws -> WriterColumnChunkMetadata {
@@ -254,20 +420,29 @@ public final class FloatColumnWriter {
 
         return WriterColumnChunkMetadata(
             column: column,
-            fileOffset: 0,  // Per spec: 0 when metadata is in footer (deprecated field)
+            fileOffset: 0,
             dataPageOffset: dataPageOffset,
             dictionaryPageOffset: nil,
             numValues: totalValues,
             totalCompressedSize: totalCompressedSize,
             totalUncompressedSize: totalUncompressedSize,
-            encodings: [.plain],
+            encodings: Array(usedEncodings),
             codec: properties.compression(for: column.name)
         )
     }
 
     private func shouldFlush() -> Bool {
-        let estimatedSize = valueBuffer.count * 4  // 4 bytes per Float
-        return estimatedSize >= properties.dataPageSize
+        if isNullable {
+            // For nullable columns, check both value buffer and definition level buffer
+            let valueSize = valueBuffer.count * 4  // 4 bytes per Float
+            // Definition levels: conservative estimate (4-byte length + ~1 bit per level)
+            let defLevelSize = 4 + (definitionLevelBuffer.count + 7) / 8
+            let estimatedSize = valueSize + defLevelSize
+            return estimatedSize >= properties.dataPageSize
+        } else {
+            let estimatedSize = valueBuffer.count * 4  // 4 bytes per Float
+            return estimatedSize >= properties.dataPageSize
+        }
     }
 }
 
@@ -279,21 +454,29 @@ public final class DoubleColumnWriter {
     private let properties: WriterProperties
     private let pageWriter: PageWriter
     private var valueBuffer: [Double] = []
+    private var definitionLevelBuffer: [UInt16] = []  // W5: Track nulls
     private var totalValues: Int64 = 0
     private let columnStartOffset: Int64
+    private let isNullable: Bool
     private var dataPageOffset: Int64?
     private var totalCompressedSize: Int64 = 0
     private var totalUncompressedSize: Int64 = 0
+    private var usedEncodings: Set<Encoding> = []
 
     init(column: Column, properties: WriterProperties, pageWriter: PageWriter, startOffset: Int64) {
         self.column = column
         self.properties = properties
         self.pageWriter = pageWriter
         self.columnStartOffset = startOffset
+        self.isNullable = !column.isRequired
     }
 
-    /// Write a batch of Double values
+    /// Write a batch of Double values (for required columns)
     public func writeValues(_ values: [Double]) throws {
+        guard !isNullable else {
+            throw WriterError.invalidState("Column \(column.name) is nullable, use writeOptionalValues()")
+        }
+
         valueBuffer.append(contentsOf: values)
         totalValues += Int64(values.count)
 
@@ -302,30 +485,68 @@ public final class DoubleColumnWriter {
         }
     }
 
+    /// Write a batch of optional Double values (for nullable columns)
+    public func writeOptionalValues(_ values: [Double?]) throws {
+        guard isNullable else {
+            throw WriterError.invalidState("Column \(column.name) is required, use writeValues()")
+        }
+
+        for value in values {
+            if let nonNullValue = value {
+                definitionLevelBuffer.append(1)
+                valueBuffer.append(nonNullValue)
+            } else {
+                definitionLevelBuffer.append(0)
+            }
+        }
+
+        totalValues += Int64(values.count)
+
+        if shouldFlush() {
+            try flush()
+        }
+    }
+
     func flush() throws {
-        guard !valueBuffer.isEmpty else {
+        guard !valueBuffer.isEmpty || (isNullable && !definitionLevelBuffer.isEmpty) else {
             return
+        }
+
+        // Encode definition levels if column is nullable
+        let definitionLevelsData: Data?
+        if isNullable {
+            let encoder = LevelEncoder(maxLevel: 1)
+            encoder.encode(definitionLevelBuffer)
+            definitionLevelsData = encoder.flush()
+            usedEncodings.insert(.rle)
+        } else {
+            definitionLevelsData = nil
         }
 
         let encoder = PlainEncoder<Double>()
         encoder.encode(valueBuffer)
 
+        let numValues = Int32(isNullable ? definitionLevelBuffer.count : valueBuffer.count)
+
         let result = try pageWriter.writeDataPage(
             values: encoder.data,
-            numValues: Int32(valueBuffer.count),
-            encoding: .plain
+            numValues: numValues,
+            encoding: .plain,
+            definitionLevels: definitionLevelsData
         )
 
         if dataPageOffset == nil {
             dataPageOffset = result.startOffset
         }
 
-        // Accumulate sizes (including page headers per Parquet spec)
         let headerLength = result.bytesWritten - result.compressedSize
         totalCompressedSize += Int64(result.compressedSize + headerLength)
         totalUncompressedSize += Int64(result.uncompressedSize + headerLength)
 
+        usedEncodings.insert(.plain)
+
         valueBuffer.removeAll(keepingCapacity: true)
+        definitionLevelBuffer.removeAll(keepingCapacity: true)
     }
 
     func close() throws -> WriterColumnChunkMetadata {
@@ -337,20 +558,29 @@ public final class DoubleColumnWriter {
 
         return WriterColumnChunkMetadata(
             column: column,
-            fileOffset: 0,  // Per spec: 0 when metadata is in footer (deprecated field)
+            fileOffset: 0,
             dataPageOffset: dataPageOffset,
             dictionaryPageOffset: nil,
             numValues: totalValues,
             totalCompressedSize: totalCompressedSize,
             totalUncompressedSize: totalUncompressedSize,
-            encodings: [.plain],
+            encodings: Array(usedEncodings),
             codec: properties.compression(for: column.name)
         )
     }
 
     private func shouldFlush() -> Bool {
-        let estimatedSize = valueBuffer.count * 8  // 8 bytes per Double
-        return estimatedSize >= properties.dataPageSize
+        if isNullable {
+            // For nullable columns, check both value buffer and definition level buffer
+            let valueSize = valueBuffer.count * 8  // 8 bytes per Double
+            // Definition levels: conservative estimate (4-byte length + ~1 bit per level)
+            let defLevelSize = 4 + (definitionLevelBuffer.count + 7) / 8
+            let estimatedSize = valueSize + defLevelSize
+            return estimatedSize >= properties.dataPageSize
+        } else {
+            let estimatedSize = valueBuffer.count * 8  // 8 bytes per Double
+            return estimatedSize >= properties.dataPageSize
+        }
     }
 }
 
@@ -550,8 +780,17 @@ public final class StringColumnWriter {
     }
 
     private func shouldFlush() -> Bool {
-        // Estimate size: 4-byte length + string bytes
-        let estimatedSize = valueBuffer.reduce(0) { $0 + 4 + $1.utf8.count }
-        return estimatedSize >= properties.dataPageSize
+        if isNullable {
+            // For nullable columns, check both value buffer and definition level buffer
+            let valueSize = valueBuffer.reduce(0) { $0 + 4 + $1.utf8.count }
+            // Definition levels: conservative estimate (4-byte length + ~1 bit per level)
+            let defLevelSize = 4 + (definitionLevelBuffer.count + 7) / 8
+            let estimatedSize = valueSize + defLevelSize
+            return estimatedSize >= properties.dataPageSize
+        } else {
+            // Estimate size: 4-byte length + string bytes
+            let estimatedSize = valueBuffer.reduce(0) { $0 + 4 + $1.utf8.count }
+            return estimatedSize >= properties.dataPageSize
+        }
     }
 }

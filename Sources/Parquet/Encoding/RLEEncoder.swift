@@ -83,7 +83,10 @@ public final class RLEEncoder {
             if value == run.value && newConsecutiveCount >= minRepeatCount {
                 // Found enough repetitions, convert to RLE
                 // Write out bit-packed values before the repeat
-                let bitPackedValues = run.bitPackedValues[..<(run.bitPackedValues.count - (minRepeatCount - 1))]
+                // Exclude repeated values already in buffer (minRepeatCount - 1, since current value not yet added)
+                let numRepeatedInBuffer = minRepeatCount - 1
+                let sliceEnd = max(0, run.bitPackedValues.count - numRepeatedInBuffer)
+                let bitPackedValues = run.bitPackedValues[..<sliceEnd]
                 if !bitPackedValues.isEmpty {
                     writeBitPackedRun(Array(bitPackedValues))
                 }
