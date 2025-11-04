@@ -43,7 +43,7 @@ public final class RowGroupWriter {
         self.ordinal = ordinal
     }
 
-    // MARK: - Column Writers (to be implemented in W1-W2)
+    // MARK: - Column Writers
 
     /// Get an Int32 column writer
     /// - Parameter index: Column index
@@ -52,8 +52,14 @@ public final class RowGroupWriter {
     public func int32ColumnWriter(at index: Int) throws -> Int32ColumnWriter {
         try validateColumnAccess(at: index, expectedType: .int32)
 
-        // TODO: Implement in W1-W2
-        fatalError("Column writers not yet implemented - W1-W2")
+        let column = schema.columns[index]
+        let codec = properties.compression(for: column.name)
+        let pageWriter = PageWriter(sink: sink, codec: codec, properties: properties)
+        let startOffset = try sink.tell()
+        let writer = Int32ColumnWriter(column: column, properties: properties, pageWriter: pageWriter, startOffset: startOffset)
+
+        columnWriters[index] = writer
+        return writer
     }
 
     /// Get an Int64 column writer
@@ -63,8 +69,14 @@ public final class RowGroupWriter {
     public func int64ColumnWriter(at index: Int) throws -> Int64ColumnWriter {
         try validateColumnAccess(at: index, expectedType: .int64)
 
-        // TODO: Implement in W1-W2
-        fatalError("Column writers not yet implemented - W1-W2")
+        let column = schema.columns[index]
+        let codec = properties.compression(for: column.name)
+        let pageWriter = PageWriter(sink: sink, codec: codec, properties: properties)
+        let startOffset = try sink.tell()
+        let writer = Int64ColumnWriter(column: column, properties: properties, pageWriter: pageWriter, startOffset: startOffset)
+
+        columnWriters[index] = writer
+        return writer
     }
 
     /// Get a Float column writer
@@ -74,8 +86,14 @@ public final class RowGroupWriter {
     public func floatColumnWriter(at index: Int) throws -> FloatColumnWriter {
         try validateColumnAccess(at: index, expectedType: .float)
 
-        // TODO: Implement in W1-W2
-        fatalError("Column writers not yet implemented - W1-W2")
+        let column = schema.columns[index]
+        let codec = properties.compression(for: column.name)
+        let pageWriter = PageWriter(sink: sink, codec: codec, properties: properties)
+        let startOffset = try sink.tell()
+        let writer = FloatColumnWriter(column: column, properties: properties, pageWriter: pageWriter, startOffset: startOffset)
+
+        columnWriters[index] = writer
+        return writer
     }
 
     /// Get a Double column writer
@@ -85,8 +103,14 @@ public final class RowGroupWriter {
     public func doubleColumnWriter(at index: Int) throws -> DoubleColumnWriter {
         try validateColumnAccess(at: index, expectedType: .double)
 
-        // TODO: Implement in W1-W2
-        fatalError("Column writers not yet implemented - W1-W2")
+        let column = schema.columns[index]
+        let codec = properties.compression(for: column.name)
+        let pageWriter = PageWriter(sink: sink, codec: codec, properties: properties)
+        let startOffset = try sink.tell()
+        let writer = DoubleColumnWriter(column: column, properties: properties, pageWriter: pageWriter, startOffset: startOffset)
+
+        columnWriters[index] = writer
+        return writer
     }
 
     /// Get a String column writer
@@ -96,8 +120,56 @@ public final class RowGroupWriter {
     public func stringColumnWriter(at index: Int) throws -> StringColumnWriter {
         try validateColumnAccess(at: index, expectedType: .byteArray)
 
-        // TODO: Implement in W1-W2
-        fatalError("Column writers not yet implemented - W1-W2")
+        let column = schema.columns[index]
+        let codec = properties.compression(for: column.name)
+        let pageWriter = PageWriter(sink: sink, codec: codec, properties: properties)
+        let startOffset = try sink.tell()
+        let writer = StringColumnWriter(column: column, properties: properties, pageWriter: pageWriter, startOffset: startOffset)
+
+        columnWriters[index] = writer
+        return writer
+    }
+
+    /// Finalize a column writer and store its metadata
+    /// - Parameter index: Column index to finalize
+    /// - Throws: WriterError if column not found or finalization fails
+    func finalizeColumn(at index: Int) throws {
+        guard let writerAny = columnWriters[index] else {
+            throw WriterError.invalidState("No writer found for column \(index)")
+        }
+
+        let metadata: WriterColumnChunkMetadata
+
+        // Type-switch to call the appropriate close() method
+        if let writer = writerAny as? Int32ColumnWriter {
+            metadata = try writer.close()
+        } else if let writer = writerAny as? Int64ColumnWriter {
+            metadata = try writer.close()
+        } else if let writer = writerAny as? FloatColumnWriter {
+            metadata = try writer.close()
+        } else if let writer = writerAny as? DoubleColumnWriter {
+            metadata = try writer.close()
+        } else if let writer = writerAny as? StringColumnWriter {
+            metadata = try writer.close()
+        } else {
+            throw WriterError.invalidState("Unknown column writer type")
+        }
+
+        // For required columns, numValues equals numRows
+        // (In W3 with nullable columns, this will need to be adjusted)
+        if currentColumn == 0 {
+            numRows = metadata.numValues
+        } else {
+            // Verify all columns have same number of rows
+            guard numRows == metadata.numValues else {
+                throw WriterError.invalidState(
+                    "Column \(index) has \(metadata.numValues) values, expected \(numRows)"
+                )
+            }
+        }
+
+        columnMetadata.append(metadata)
+        currentColumn += 1
     }
 
     // MARK: - Row Group Finalization
@@ -160,31 +232,4 @@ public final class RowGroupWriter {
             )
         }
     }
-}
-
-// MARK: - Column Writer Stubs (to be implemented in W1-W2)
-
-/// Column writer for Int32 values
-public final class Int32ColumnWriter {
-    // TODO: Implement in W1-W2
-}
-
-/// Column writer for Int64 values
-public final class Int64ColumnWriter {
-    // TODO: Implement in W1-W2
-}
-
-/// Column writer for Float values
-public final class FloatColumnWriter {
-    // TODO: Implement in W1-W2
-}
-
-/// Column writer for Double values
-public final class DoubleColumnWriter {
-    // TODO: Implement in W1-W2
-}
-
-/// Column writer for String values
-public final class StringColumnWriter {
-    // TODO: Implement in W1-W2
 }

@@ -264,4 +264,116 @@ final class ParquetFileWriterTests: XCTestCase {
         XCTAssertEqual(String(data: startMagic, encoding: .utf8), "PAR1")
         XCTAssertEqual(String(data: endMagic, encoding: .utf8), "PAR1")
     }
+
+    // MARK: - W2 Tests - Column Writers
+
+    func testWriteAndReadInt32Column() throws {
+        // Write Int32 data and read it back
+        let url = temporaryFileURL()
+        defer { cleanupFile(url) }
+
+        // Create schema with Int32 column
+        let idColumn = SchemaElement(
+            name: "id",
+            elementType: .primitive(physicalType: .int32, logicalType: nil),
+            repetitionType: .required,
+            fieldId: nil,
+            children: [],
+            parent: nil,
+            depth: 1
+        )
+
+        let root = SchemaElement(
+            name: "schema",
+            elementType: .group(logicalType: nil),
+            repetitionType: nil,
+            fieldId: nil,
+            children: [idColumn],
+            parent: nil,
+            depth: 0
+        )
+
+        let schema = Schema(root: root)
+
+        // Write data
+        let writer = try ParquetFileWriter(url: url)
+        try writer.setSchema(schema)
+
+        let rowGroup = try writer.createRowGroup()
+        let columnWriter = try rowGroup.int32ColumnWriter(at: 0)
+
+        let testValues: [Int32] = [1, 2, 3, 4, 5]
+        try columnWriter.writeValues(testValues)
+        try rowGroup.finalizeColumn(at: 0)
+
+        try writer.close()
+
+        // Read back and verify
+        let reader = try ParquetFileReader(url: url)
+        defer { try? reader.close() }
+
+        XCTAssertEqual(reader.metadata.numRows, Int64(testValues.count))
+        XCTAssertEqual(reader.metadata.numRowGroups, 1)
+
+        let readRowGroup = try reader.rowGroup(at: 0)
+        let readColumn = try readRowGroup.int32Column(at: 0)
+        let readValues = try readColumn.readAll()
+
+        XCTAssertEqual(readValues, testValues)
+    }
+
+    func testWriteAndReadStringColumn() throws {
+        // Write String data and read it back
+        let url = temporaryFileURL()
+        defer { cleanupFile(url) }
+
+        // Create schema with String column
+        let nameColumn = SchemaElement(
+            name: "name",
+            elementType: .primitive(physicalType: .byteArray, logicalType: .string),
+            repetitionType: .required,
+            fieldId: nil,
+            children: [],
+            parent: nil,
+            depth: 1
+        )
+
+        let root = SchemaElement(
+            name: "schema",
+            elementType: .group(logicalType: nil),
+            repetitionType: nil,
+            fieldId: nil,
+            children: [nameColumn],
+            parent: nil,
+            depth: 0
+        )
+
+        let schema = Schema(root: root)
+
+        // Write data
+        let writer = try ParquetFileWriter(url: url)
+        try writer.setSchema(schema)
+
+        let rowGroup = try writer.createRowGroup()
+        let columnWriter = try rowGroup.stringColumnWriter(at: 0)
+
+        let testValues = ["Alice", "Bob", "Charlie", "Diana", "Eve"]
+        try columnWriter.writeValues(testValues)
+        try rowGroup.finalizeColumn(at: 0)
+
+        try writer.close()
+
+        // Read back and verify
+        let reader = try ParquetFileReader(url: url)
+        defer { try? reader.close() }
+
+        XCTAssertEqual(reader.metadata.numRows, Int64(testValues.count))
+        XCTAssertEqual(reader.metadata.numRowGroups, 1)
+
+        let readRowGroup = try reader.rowGroup(at: 0)
+        let readColumn = try readRowGroup.stringColumn(at: 0)
+        let readValues = try readColumn.readAll()
+
+        XCTAssertEqual(readValues, testValues)
+    }
 }

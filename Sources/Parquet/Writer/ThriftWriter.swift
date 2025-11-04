@@ -54,6 +54,187 @@ final class ThriftWriter {
         try writeStructEnd()
     }
 
+    // MARK: - Page Header Writing
+
+    func writePageHeader(_ header: ThriftPageHeader) throws {
+        try writeStructBegin()
+
+        // Field 1: type (PageType, required)
+        try writeFieldBegin(type: .i32, id: 1)
+        try writeI32(Int32(header.type.rawValue))
+
+        // Field 2: uncompressed_page_size (i32, required)
+        try writeFieldBegin(type: .i32, id: 2)
+        try writeI32(header.uncompressedPageSize)
+
+        // Field 3: compressed_page_size (i32, required)
+        try writeFieldBegin(type: .i32, id: 3)
+        try writeI32(header.compressedPageSize)
+
+        // Field 4: crc (i32, optional)
+        if let crc = header.crc {
+            try writeFieldBegin(type: .i32, id: 4)
+            try writeI32(crc)
+        }
+
+        // Field 5: data_page_header (DataPageHeader, optional)
+        if let dataPageHeader = header.dataPageHeader {
+            try writeFieldBegin(type: .struct, id: 5)
+            try writeDataPageHeader(dataPageHeader)
+        }
+
+        // Field 6: index_page_header (IndexPageHeader, optional) - not implemented
+
+        // Field 7: dictionary_page_header (DictionaryPageHeader, optional)
+        if let dictionaryPageHeader = header.dictionaryPageHeader {
+            try writeFieldBegin(type: .struct, id: 7)
+            try writeDictionaryPageHeader(dictionaryPageHeader)
+        }
+
+        // Field 8: data_page_header_v2 (DataPageHeaderV2, optional)
+        if let dataPageHeaderV2 = header.dataPageHeaderV2 {
+            try writeFieldBegin(type: .struct, id: 8)
+            try writeDataPageHeaderV2(dataPageHeaderV2)
+        }
+
+        try writeFieldStop()
+        try writeStructEnd()
+    }
+
+    private func writeDataPageHeader(_ header: ThriftDataPageHeader) throws {
+        try writeStructBegin()
+
+        // Field 1: num_values (i32, required)
+        try writeFieldBegin(type: .i32, id: 1)
+        try writeI32(header.numValues)
+
+        // Field 2: encoding (Encoding, required)
+        try writeFieldBegin(type: .i32, id: 2)
+        try writeI32(Int32(header.encoding.rawValue))
+
+        // Field 3: definition_level_encoding (Encoding, required)
+        try writeFieldBegin(type: .i32, id: 3)
+        try writeI32(Int32(header.definitionLevelEncoding.rawValue))
+
+        // Field 4: repetition_level_encoding (Encoding, required)
+        try writeFieldBegin(type: .i32, id: 4)
+        try writeI32(Int32(header.repetitionLevelEncoding.rawValue))
+
+        // Field 5: statistics (Statistics, optional)
+        if let statistics = header.statistics {
+            try writeFieldBegin(type: .struct, id: 5)
+            try writeStatistics(statistics)
+        }
+
+        try writeFieldStop()
+        try writeStructEnd()
+    }
+
+    private func writeDictionaryPageHeader(_ header: ThriftDictionaryPageHeader) throws {
+        try writeStructBegin()
+
+        // Field 1: num_values (i32, required)
+        try writeFieldBegin(type: .i32, id: 1)
+        try writeI32(header.numValues)
+
+        // Field 2: encoding (Encoding, required)
+        try writeFieldBegin(type: .i32, id: 2)
+        try writeI32(Int32(header.encoding.rawValue))
+
+        // Field 3: is_sorted (bool, optional)
+        if let isSorted = header.isSorted {
+            try writeFieldBegin(type: .bool, id: 3)
+            try writeBool(isSorted)
+        }
+
+        try writeFieldStop()
+        try writeStructEnd()
+    }
+
+    private func writeDataPageHeaderV2(_ header: ThriftDataPageHeaderV2) throws {
+        try writeStructBegin()
+
+        // Field 1: num_values (i32, required)
+        try writeFieldBegin(type: .i32, id: 1)
+        try writeI32(header.numValues)
+
+        // Field 2: num_nulls (i32, required)
+        try writeFieldBegin(type: .i32, id: 2)
+        try writeI32(header.numNulls)
+
+        // Field 3: num_rows (i32, required)
+        try writeFieldBegin(type: .i32, id: 3)
+        try writeI32(header.numRows)
+
+        // Field 4: encoding (Encoding, required)
+        try writeFieldBegin(type: .i32, id: 4)
+        try writeI32(Int32(header.encoding.rawValue))
+
+        // Field 5: definition_levels_byte_length (i32, required)
+        try writeFieldBegin(type: .i32, id: 5)
+        try writeI32(header.definitionLevelsByteLength)
+
+        // Field 6: repetition_levels_byte_length (i32, required)
+        try writeFieldBegin(type: .i32, id: 6)
+        try writeI32(header.repetitionLevelsByteLength)
+
+        // Field 7: is_compressed (bool, optional)
+        try writeFieldBegin(type: .bool, id: 7)
+        try writeBool(header.isCompressed)
+
+        // Field 8: statistics (Statistics, optional)
+        if let statistics = header.statistics {
+            try writeFieldBegin(type: .struct, id: 8)
+            try writeStatistics(statistics)
+        }
+
+        try writeFieldStop()
+        try writeStructEnd()
+    }
+
+    private func writeStatistics(_ statistics: ThriftStatistics) throws {
+        try writeStructBegin()
+
+        // Field 1: max (binary, optional)
+        if let max = statistics.max {
+            try writeFieldBegin(type: .string, id: 1)
+            try writeBinary(max)
+        }
+
+        // Field 2: min (binary, optional)
+        if let min = statistics.min {
+            try writeFieldBegin(type: .string, id: 2)
+            try writeBinary(min)
+        }
+
+        // Field 3: null_count (i64, optional)
+        if let nullCount = statistics.nullCount {
+            try writeFieldBegin(type: .i64, id: 3)
+            try writeI64(nullCount)
+        }
+
+        // Field 4: distinct_count (i64, optional)
+        if let distinctCount = statistics.distinctCount {
+            try writeFieldBegin(type: .i64, id: 4)
+            try writeI64(distinctCount)
+        }
+
+        // Field 5: max_value (binary, optional)
+        if let maxValue = statistics.maxValue {
+            try writeFieldBegin(type: .string, id: 5)
+            try writeBinary(maxValue)
+        }
+
+        // Field 6: min_value (binary, optional)
+        if let minValue = statistics.minValue {
+            try writeFieldBegin(type: .string, id: 6)
+            try writeBinary(minValue)
+        }
+
+        try writeFieldStop()
+        try writeStructEnd()
+    }
+
     // MARK: - Schema Element Writing
 
     private func writeSchemaElementList(_ elements: [ThriftSchemaElement]) throws {
@@ -493,6 +674,11 @@ final class ThriftWriter {
         let utf8 = Data(value.utf8)
         try writeVarint(UInt64(utf8.count))
         data.append(utf8)
+    }
+
+    private func writeBinary(_ value: Data) throws {
+        try writeVarint(UInt64(value.count))
+        data.append(value)
     }
 
     private func writeVarint(_ value: UInt64) throws {
