@@ -847,4 +847,338 @@ final class ParquetFileWriterTests: XCTestCase {
             }
         }
     }
+
+    // MARK: - Statistics Integration Tests (W6)
+
+    func testInt32RequiredColumnStatistics() throws {
+        let url = temporaryFileURL()
+        defer { cleanupFile(url) }
+
+        let column = SchemaElement(
+            name: "value",
+            elementType: .primitive(physicalType: .int32, logicalType: nil),
+            repetitionType: .required,
+            fieldId: nil,
+            children: [],
+            parent: nil,
+            depth: 1
+        )
+
+        let root = SchemaElement(
+            name: "schema",
+            elementType: .group(logicalType: nil),
+            repetitionType: .required,
+            fieldId: nil,
+            children: [column],
+            parent: nil,
+            depth: 0
+        )
+
+        let schema = Schema(root: root)
+
+        let writer = try ParquetFileWriter(url: url)
+        try writer.setSchema(schema)
+
+        let rowGroup = try writer.createRowGroup()
+        let columnWriter = try rowGroup.int32ColumnWriter(at: 0)
+
+        // Write values with known min/max
+        let testValues: [Int32] = [100, 50, 200, 75, 150, -10, 300]
+        try columnWriter.writeValues(testValues)
+        try rowGroup.finalizeColumn(at: 0)
+        try writer.close()
+
+        // Read back and verify statistics
+        let reader = try ParquetFileReader(url: url)
+        defer { try? reader.close() }
+
+        let columnMeta = reader.metadata.rowGroups[0].columns[0]
+        XCTAssertNotNil(columnMeta.metadata?.statistics, "Statistics should be present")
+
+        let stats = columnMeta.metadata!.statistics!
+
+        // Verify both modern and legacy fields populated
+        XCTAssertNotNil(stats.minValue, "minValue (modern) should be populated")
+        XCTAssertNotNil(stats.maxValue, "maxValue (modern) should be populated")
+        XCTAssertNotNil(stats.min, "min (legacy) should be populated")
+        XCTAssertNotNil(stats.max, "max (legacy) should be populated")
+
+        // Verify values are correct
+        XCTAssertEqual(decodePlainInt32(stats.minValue!), -10)
+        XCTAssertEqual(decodePlainInt32(stats.maxValue!), 300)
+
+        // Verify legacy fields match modern fields
+        XCTAssertEqual(stats.min, stats.minValue, "Legacy min should match modern minValue")
+        XCTAssertEqual(stats.max, stats.maxValue, "Legacy max should match modern maxValue")
+
+        // No nulls in required column
+        XCTAssertNil(stats.nullCount, "Required column should have no null count")
+    }
+
+    func testInt32NullableColumnStatistics() throws {
+        let url = temporaryFileURL()
+        defer { cleanupFile(url) }
+
+        let column = SchemaElement(
+            name: "value",
+            elementType: .primitive(physicalType: .int32, logicalType: nil),
+            repetitionType: .optional,
+            fieldId: nil,
+            children: [],
+            parent: nil,
+            depth: 1
+        )
+
+        let root = SchemaElement(
+            name: "schema",
+            elementType: .group(logicalType: nil),
+            repetitionType: .required,
+            fieldId: nil,
+            children: [column],
+            parent: nil,
+            depth: 0
+        )
+
+        let schema = Schema(root: root)
+
+        let writer = try ParquetFileWriter(url: url)
+        try writer.setSchema(schema)
+
+        let rowGroup = try writer.createRowGroup()
+        let columnWriter = try rowGroup.int32ColumnWriter(at: 0)
+
+        // Write nullable values
+        let testValues: [Int32?] = [100, nil, 200, nil, 50, nil, 300]
+        try columnWriter.writeOptionalValues(testValues)
+        try rowGroup.finalizeColumn(at: 0)
+        try writer.close()
+
+        // Read back and verify statistics
+        let reader = try ParquetFileReader(url: url)
+        defer { try? reader.close() }
+
+        let columnMeta = reader.metadata.rowGroups[0].columns[0]
+        XCTAssertNotNil(columnMeta.metadata?.statistics)
+
+        let stats = columnMeta.metadata!.statistics!
+
+        // Verify min/max (excluding nulls)
+        XCTAssertEqual(decodePlainInt32(stats.minValue!), 50)
+        XCTAssertEqual(decodePlainInt32(stats.maxValue!), 300)
+
+        // Verify null count
+        XCTAssertEqual(stats.nullCount, 3, "Should count 3 null values")
+
+        // Verify legacy fields
+        XCTAssertEqual(stats.min, stats.minValue)
+        XCTAssertEqual(stats.max, stats.maxValue)
+    }
+
+    func testStringColumnStatistics() throws {
+        let url = temporaryFileURL()
+        defer { cleanupFile(url) }
+
+        let column = SchemaElement(
+            name: "name",
+            elementType: .primitive(physicalType: .byteArray, logicalType: .string),
+            repetitionType: .required,
+            fieldId: nil,
+            children: [],
+            parent: nil,
+            depth: 1
+        )
+
+        let root = SchemaElement(
+            name: "schema",
+            elementType: .group(logicalType: nil),
+            repetitionType: .required,
+            fieldId: nil,
+            children: [column],
+            parent: nil,
+            depth: 0
+        )
+
+        let schema = Schema(root: root)
+
+        let writer = try ParquetFileWriter(url: url)
+        try writer.setSchema(schema)
+
+        let rowGroup = try writer.createRowGroup()
+        let columnWriter = try rowGroup.stringColumnWriter(at: 0)
+
+        // Write strings with known lexicographic order
+        let testValues = ["zebra", "apple", "banana", "aardvark"]
+        try columnWriter.writeValues(testValues)
+        try rowGroup.finalizeColumn(at: 0)
+        try writer.close()
+
+        // Read back and verify statistics
+        let reader = try ParquetFileReader(url: url)
+        defer { try? reader.close() }
+
+        let columnMeta = reader.metadata.rowGroups[0].columns[0]
+        XCTAssertNotNil(columnMeta.metadata?.statistics)
+
+        let stats = columnMeta.metadata!.statistics!
+
+        // Verify byte-wise lexicographic ordering
+        XCTAssertEqual(decodePlainByteArray(stats.minValue!), "aardvark")
+        XCTAssertEqual(decodePlainByteArray(stats.maxValue!), "zebra")
+
+        // Verify legacy fields
+        XCTAssertEqual(stats.min, stats.minValue)
+        XCTAssertEqual(stats.max, stats.maxValue)
+        XCTAssertNil(stats.nullCount)
+    }
+
+    func testFloatColumnStatisticsWithNaN() throws {
+        let url = temporaryFileURL()
+        defer { cleanupFile(url) }
+
+        let column = SchemaElement(
+            name: "value",
+            elementType: .primitive(physicalType: .float, logicalType: nil),
+            repetitionType: .required,
+            fieldId: nil,
+            children: [],
+            parent: nil,
+            depth: 1
+        )
+
+        let root = SchemaElement(
+            name: "schema",
+            elementType: .group(logicalType: nil),
+            repetitionType: .required,
+            fieldId: nil,
+            children: [column],
+            parent: nil,
+            depth: 0
+        )
+
+        let schema = Schema(root: root)
+
+        let writer = try ParquetFileWriter(url: url)
+        try writer.setSchema(schema)
+
+        let rowGroup = try writer.createRowGroup()
+        let columnWriter = try rowGroup.floatColumnWriter(at: 0)
+
+        // Write values including NaN
+        let testValues: [Float] = [10.5, Float.nan, 20.3, Float.nan, 5.1]
+        try columnWriter.writeValues(testValues)
+        try rowGroup.finalizeColumn(at: 0)
+        try writer.close()
+
+        // Read back and verify statistics
+        let reader = try ParquetFileReader(url: url)
+        defer { try? reader.close() }
+
+        let columnMeta = reader.metadata.rowGroups[0].columns[0]
+        XCTAssertNotNil(columnMeta.metadata?.statistics)
+
+        let stats = columnMeta.metadata!.statistics!
+
+        // Verify NaN excluded from min/max
+        XCTAssertEqual(decodePlainFloat(stats.minValue!), 5.1, accuracy: 0.001)
+        XCTAssertEqual(decodePlainFloat(stats.maxValue!), 20.3, accuracy: 0.001)
+
+        // NaN is NOT counted as NULL
+        XCTAssertNil(stats.nullCount, "NaN should not be counted as NULL")
+
+        // Verify legacy fields
+        XCTAssertEqual(stats.min, stats.minValue)
+        XCTAssertEqual(stats.max, stats.maxValue)
+    }
+
+    func testAllNullColumnStatistics() throws {
+        let url = temporaryFileURL()
+        defer { cleanupFile(url) }
+
+        let column = SchemaElement(
+            name: "value",
+            elementType: .primitive(physicalType: .int32, logicalType: nil),
+            repetitionType: .optional,
+            fieldId: nil,
+            children: [],
+            parent: nil,
+            depth: 1
+        )
+
+        let root = SchemaElement(
+            name: "schema",
+            elementType: .group(logicalType: nil),
+            repetitionType: .required,
+            fieldId: nil,
+            children: [column],
+            parent: nil,
+            depth: 0
+        )
+
+        let schema = Schema(root: root)
+
+        let writer = try ParquetFileWriter(url: url)
+        try writer.setSchema(schema)
+
+        let rowGroup = try writer.createRowGroup()
+        let columnWriter = try rowGroup.int32ColumnWriter(at: 0)
+
+        // Write all null values
+        let testValues: [Int32?] = [nil, nil, nil, nil]
+        try columnWriter.writeOptionalValues(testValues)
+        try rowGroup.finalizeColumn(at: 0)
+        try writer.close()
+
+        // Read back and verify statistics
+        let reader = try ParquetFileReader(url: url)
+        defer { try? reader.close() }
+
+        let columnMeta = reader.metadata.rowGroups[0].columns[0]
+        XCTAssertNotNil(columnMeta.metadata?.statistics)
+
+        let stats = columnMeta.metadata!.statistics!
+
+        // No non-null values means no min/max
+        XCTAssertNil(stats.minValue, "All-null column should have no min")
+        XCTAssertNil(stats.maxValue, "All-null column should have no max")
+        XCTAssertNil(stats.min, "Legacy min should also be nil")
+        XCTAssertNil(stats.max, "Legacy max should also be nil")
+
+        // But null count should be set
+        XCTAssertEqual(stats.nullCount, 4)
+    }
+
+    // MARK: - Statistics Test Helpers
+
+    private func decodePlainInt32(_ data: Data) -> Int32 {
+        precondition(data.count == 4)
+        var value: Int32 = 0
+        value |= Int32(data[0])
+        value |= Int32(data[1]) << 8
+        value |= Int32(data[2]) << 16
+        value |= Int32(data[3]) << 24
+        return value
+    }
+
+    private func decodePlainFloat(_ data: Data) -> Float {
+        precondition(data.count == 4)
+        var bits: UInt32 = 0
+        bits |= UInt32(data[0])
+        bits |= UInt32(data[1]) << 8
+        bits |= UInt32(data[2]) << 16
+        bits |= UInt32(data[3]) << 24
+        return Float(bitPattern: bits)
+    }
+
+    private func decodePlainByteArray(_ data: Data) -> String {
+        precondition(data.count >= 4)
+
+        var length: UInt32 = 0
+        length |= UInt32(data[0])
+        length |= UInt32(data[1]) << 8
+        length |= UInt32(data[2]) << 16
+        length |= UInt32(data[3]) << 24
+
+        let bytes = data.subdata(in: 4..<(4 + Int(length)))
+        return String(data: bytes, encoding: .utf8)!
+    }
 }

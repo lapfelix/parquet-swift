@@ -275,8 +275,22 @@ struct WriterColumnChunkMetadata {
     let totalUncompressedSize: Int64
     let encodings: [Encoding]
     let codec: Compression
+    let statistics: ColumnChunkStatistics?  // W6: Statistics for column chunk
 
     func toThrift() -> ThriftColumnChunk {
+        // W6: Serialize statistics if available
+        var thriftStatistics: ThriftStatistics? = nil
+        if let stats = statistics {
+            thriftStatistics = ThriftStatistics(
+                max: stats.max,
+                min: stats.min,
+                nullCount: stats.nullCount,
+                distinctCount: stats.distinctCount,
+                maxValue: stats.maxValue,
+                minValue: stats.minValue
+            )
+        }
+
         let metaData = ThriftColumnMetaData(
             type: column.physicalType.toThrift(),
             encodings: encodings.map { $0.toThrift() },
@@ -289,7 +303,7 @@ struct WriterColumnChunkMetadata {
             dataPageOffset: dataPageOffset,
             indexPageOffset: nil,
             dictionaryPageOffset: dictionaryPageOffset,
-            statistics: nil,
+            statistics: thriftStatistics,
             encodingStats: nil,
             bloomFilterOffset: nil,
             bloomFilterLength: nil

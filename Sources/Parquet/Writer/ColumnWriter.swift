@@ -25,12 +25,20 @@ public final class Int32ColumnWriter {
     private var totalUncompressedSize: Int64 = 0
     private var usedEncodings: Set<Encoding> = []
 
+    // W6: Statistics tracking
+    private var statisticsAccumulator: Int32StatisticsAccumulator?
+
     init(column: Column, properties: WriterProperties, pageWriter: PageWriter, startOffset: Int64) {
         self.column = column
         self.properties = properties
         self.pageWriter = pageWriter
         self.columnStartOffset = startOffset
         self.isNullable = !column.isRequired
+
+        // W6: Initialize statistics accumulator if enabled
+        if properties.statisticsEnabled(for: column.name) {
+            self.statisticsAccumulator = Int32StatisticsAccumulator()
+        }
     }
 
     /// Write a batch of Int32 values (for required columns)
@@ -40,6 +48,9 @@ public final class Int32ColumnWriter {
         guard !isNullable else {
             throw WriterError.invalidState("Column \(column.name) is nullable, use writeOptionalValues()")
         }
+
+        // W6: Update statistics (zero-copy, type-safe)
+        statisticsAccumulator?.update(values)
 
         valueBuffer.append(contentsOf: values)
         totalValues += Int64(values.count)
@@ -57,6 +68,9 @@ public final class Int32ColumnWriter {
         guard isNullable else {
             throw WriterError.invalidState("Column \(column.name) is required, use writeValues()")
         }
+
+        // W6: Update statistics (zero-copy, type-safe)
+        statisticsAccumulator?.updateNullable(values)
 
         // Encode definition levels and non-null values
         for value in values {
@@ -142,6 +156,9 @@ public final class Int32ColumnWriter {
             throw WriterError.invalidState("No data pages written for column \(column.name)")
         }
 
+        // W6: Build statistics if enabled
+        let statistics = statisticsAccumulator?.build()
+
         return WriterColumnChunkMetadata(
             column: column,
             fileOffset: 0,  // Per spec: 0 when metadata is in footer (deprecated field)
@@ -151,7 +168,8 @@ public final class Int32ColumnWriter {
             totalCompressedSize: totalCompressedSize,
             totalUncompressedSize: totalUncompressedSize,
             encodings: Array(usedEncodings),
-            codec: properties.compression(for: column.name)
+            codec: properties.compression(for: column.name),
+            statistics: statistics
         )
     }
 
@@ -186,6 +204,7 @@ public final class Int64ColumnWriter {
     private var totalCompressedSize: Int64 = 0
     private var totalUncompressedSize: Int64 = 0
     private var usedEncodings: Set<Encoding> = []
+    private var statisticsAccumulator: Int64StatisticsAccumulator?  // W6
 
     init(column: Column, properties: WriterProperties, pageWriter: PageWriter, startOffset: Int64) {
         self.column = column
@@ -193,6 +212,9 @@ public final class Int64ColumnWriter {
         self.pageWriter = pageWriter
         self.columnStartOffset = startOffset
         self.isNullable = !column.isRequired
+        if properties.statisticsEnabled(for: column.name) {
+            self.statisticsAccumulator = Int64StatisticsAccumulator()
+        }
     }
 
     /// Write a batch of Int64 values (for required columns)
@@ -201,6 +223,7 @@ public final class Int64ColumnWriter {
             throw WriterError.invalidState("Column \(column.name) is nullable, use writeOptionalValues()")
         }
 
+        statisticsAccumulator?.update(values)  // W6
         valueBuffer.append(contentsOf: values)
         totalValues += Int64(values.count)
 
@@ -215,6 +238,7 @@ public final class Int64ColumnWriter {
             throw WriterError.invalidState("Column \(column.name) is required, use writeValues()")
         }
 
+        statisticsAccumulator?.updateNullable(values)  // W6
         for value in values {
             if let nonNullValue = value {
                 definitionLevelBuffer.append(1)
@@ -280,6 +304,8 @@ public final class Int64ColumnWriter {
             throw WriterError.invalidState("No data pages written for column \(column.name)")
         }
 
+        let statistics = statisticsAccumulator?.build()  // W6
+
         return WriterColumnChunkMetadata(
             column: column,
             fileOffset: 0,
@@ -289,7 +315,8 @@ public final class Int64ColumnWriter {
             totalCompressedSize: totalCompressedSize,
             totalUncompressedSize: totalUncompressedSize,
             encodings: Array(usedEncodings),
-            codec: properties.compression(for: column.name)
+            codec: properties.compression(for: column.name),
+            statistics: statistics
         )
     }
 
@@ -324,6 +351,7 @@ public final class FloatColumnWriter {
     private var totalCompressedSize: Int64 = 0
     private var totalUncompressedSize: Int64 = 0
     private var usedEncodings: Set<Encoding> = []
+    private var statisticsAccumulator: FloatStatisticsAccumulator?  // W6
 
     init(column: Column, properties: WriterProperties, pageWriter: PageWriter, startOffset: Int64) {
         self.column = column
@@ -331,6 +359,9 @@ public final class FloatColumnWriter {
         self.pageWriter = pageWriter
         self.columnStartOffset = startOffset
         self.isNullable = !column.isRequired
+        if properties.statisticsEnabled(for: column.name) {
+            self.statisticsAccumulator = FloatStatisticsAccumulator()
+        }
     }
 
     /// Write a batch of Float values (for required columns)
@@ -339,6 +370,7 @@ public final class FloatColumnWriter {
             throw WriterError.invalidState("Column \(column.name) is nullable, use writeOptionalValues()")
         }
 
+        statisticsAccumulator?.update(values)  // W6
         valueBuffer.append(contentsOf: values)
         totalValues += Int64(values.count)
 
@@ -353,6 +385,7 @@ public final class FloatColumnWriter {
             throw WriterError.invalidState("Column \(column.name) is required, use writeValues()")
         }
 
+        statisticsAccumulator?.updateNullable(values)  // W6
         for value in values {
             if let nonNullValue = value {
                 definitionLevelBuffer.append(1)
@@ -418,6 +451,8 @@ public final class FloatColumnWriter {
             throw WriterError.invalidState("No data pages written for column \(column.name)")
         }
 
+        let statistics = statisticsAccumulator?.build()  // W6
+
         return WriterColumnChunkMetadata(
             column: column,
             fileOffset: 0,
@@ -427,7 +462,8 @@ public final class FloatColumnWriter {
             totalCompressedSize: totalCompressedSize,
             totalUncompressedSize: totalUncompressedSize,
             encodings: Array(usedEncodings),
-            codec: properties.compression(for: column.name)
+            codec: properties.compression(for: column.name),
+            statistics: statistics
         )
     }
 
@@ -462,6 +498,7 @@ public final class DoubleColumnWriter {
     private var totalCompressedSize: Int64 = 0
     private var totalUncompressedSize: Int64 = 0
     private var usedEncodings: Set<Encoding> = []
+    private var statisticsAccumulator: DoubleStatisticsAccumulator?  // W6
 
     init(column: Column, properties: WriterProperties, pageWriter: PageWriter, startOffset: Int64) {
         self.column = column
@@ -469,6 +506,9 @@ public final class DoubleColumnWriter {
         self.pageWriter = pageWriter
         self.columnStartOffset = startOffset
         self.isNullable = !column.isRequired
+        if properties.statisticsEnabled(for: column.name) {
+            self.statisticsAccumulator = DoubleStatisticsAccumulator()
+        }
     }
 
     /// Write a batch of Double values (for required columns)
@@ -477,6 +517,7 @@ public final class DoubleColumnWriter {
             throw WriterError.invalidState("Column \(column.name) is nullable, use writeOptionalValues()")
         }
 
+        statisticsAccumulator?.update(values)  // W6
         valueBuffer.append(contentsOf: values)
         totalValues += Int64(values.count)
 
@@ -491,6 +532,7 @@ public final class DoubleColumnWriter {
             throw WriterError.invalidState("Column \(column.name) is required, use writeValues()")
         }
 
+        statisticsAccumulator?.updateNullable(values)  // W6
         for value in values {
             if let nonNullValue = value {
                 definitionLevelBuffer.append(1)
@@ -556,6 +598,8 @@ public final class DoubleColumnWriter {
             throw WriterError.invalidState("No data pages written for column \(column.name)")
         }
 
+        let statistics = statisticsAccumulator?.build()  // W6
+
         return WriterColumnChunkMetadata(
             column: column,
             fileOffset: 0,
@@ -565,7 +609,8 @@ public final class DoubleColumnWriter {
             totalCompressedSize: totalCompressedSize,
             totalUncompressedSize: totalUncompressedSize,
             encodings: Array(usedEncodings),
-            codec: properties.compression(for: column.name)
+            codec: properties.compression(for: column.name),
+            statistics: statistics
         )
     }
 
@@ -605,6 +650,9 @@ public final class StringColumnWriter {
     private var dictionaryEncoder: DictionaryEncoder<String>?
     private var usedEncodings: Set<Encoding> = []
 
+    // W6: Statistics tracking
+    private var statisticsAccumulator: StringStatisticsAccumulator?
+
     init(column: Column, properties: WriterProperties, pageWriter: PageWriter, startOffset: Int64) {
         self.column = column
         self.properties = properties
@@ -616,6 +664,11 @@ public final class StringColumnWriter {
         if properties.dictionaryEnabled(for: column.name) {
             self.dictionaryEncoder = DictionaryEncoder<String>()
         }
+
+        // W6: Enable statistics if configured
+        if properties.statisticsEnabled(for: column.name) {
+            self.statisticsAccumulator = StringStatisticsAccumulator()
+        }
     }
 
     /// Write a batch of String values (for required columns)
@@ -623,6 +676,8 @@ public final class StringColumnWriter {
         guard !isNullable else {
             throw WriterError.invalidState("Column \(column.name) is nullable, use writeOptionalValues()")
         }
+
+        statisticsAccumulator?.update(values)  // W6
 
         // Feed values to dictionary encoder if enabled
         if let dictEncoder = dictionaryEncoder {
@@ -643,6 +698,8 @@ public final class StringColumnWriter {
         guard isNullable else {
             throw WriterError.invalidState("Column \(column.name) is required, use writeValues()")
         }
+
+        statisticsAccumulator?.updateNullable(values)  // W6
 
         // Encode definition levels and non-null values
         for value in values {
@@ -766,6 +823,8 @@ public final class StringColumnWriter {
             throw WriterError.invalidState("No data pages written for column \(column.name)")
         }
 
+        let statistics = statisticsAccumulator?.build()  // W6
+
         return WriterColumnChunkMetadata(
             column: column,
             fileOffset: 0,  // Per spec: 0 when metadata is in footer (deprecated field)
@@ -775,7 +834,8 @@ public final class StringColumnWriter {
             totalCompressedSize: totalCompressedSize,
             totalUncompressedSize: totalUncompressedSize,
             encodings: Array(usedEncodings),
-            codec: properties.compression(for: column.name)
+            codec: properties.compression(for: column.name),
+            statistics: statistics
         )
     }
 

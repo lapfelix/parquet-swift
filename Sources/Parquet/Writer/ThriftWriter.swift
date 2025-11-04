@@ -410,6 +410,12 @@ final class ThriftWriter {
             try writeI64(dictionaryPageOffset)
         }
 
+        // Field 12: statistics (Statistics, optional)
+        if let statistics = metaData.statistics {
+            try writeFieldBegin(type: .struct, id: 12)
+            try writeStatistics(statistics)
+        }
+
         try writeFieldStop()
         try writeStructEnd()
     }
