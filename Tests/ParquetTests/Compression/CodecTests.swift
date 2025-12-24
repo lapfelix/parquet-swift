@@ -24,8 +24,13 @@ final class CodecTests: XCTestCase {
         XCTAssertEqual(codec.compressionType, .snappy)
     }
 
+    func testCodecFactoryZstd() throws {
+        let codec = try CodecFactory.codec(for: .zstd)
+        XCTAssertEqual(codec.compressionType, .zstd)
+    }
+
     func testCodecFactoryUnsupportedCodecs() {
-        let unsupported: [Compression] = [.lz4, .lz4Raw, .zstd, .brotli, .lzo]
+        let unsupported: [Compression] = [.lz4, .lz4Raw, .brotli, .lzo]
 
         for compression in unsupported {
             XCTAssertThrowsError(try CodecFactory.codec(for: compression)) { error in
@@ -40,7 +45,8 @@ final class CodecTests: XCTestCase {
     func testCodecFactoryIsAvailable() {
         XCTAssertTrue(CodecFactory.isAvailable(.uncompressed))
         XCTAssertTrue(CodecFactory.isAvailable(.gzip))
-        XCTAssertTrue(CodecFactory.isAvailable(.snappy)) // Now available!
+        XCTAssertTrue(CodecFactory.isAvailable(.snappy))
+        XCTAssertTrue(CodecFactory.isAvailable(.zstd))
         XCTAssertFalse(CodecFactory.isAvailable(.lz4))
     }
 
@@ -280,6 +286,129 @@ final class CodecTests: XCTestCase {
 
         let decompressed = try codec.decompress(compressed, uncompressedSize: original.count)
         XCTAssertEqual(decompressed, original)
+    }
+
+    // MARK: - ZSTD Codec Tests
+
+    func testZstdRoundTrip() throws {
+        let codec = try CodecFactory.codec(for: .zstd)
+        let original = Data("Hello, World! This is a test string for ZSTD compression.".utf8)
+
+        // Compress
+        let compressed = try codec.compress(original)
+
+        // Should be smaller (or at least different)
+        print("ZSTD Original: \(original.count) bytes, Compressed: \(compressed.count) bytes")
+
+        // Decompress
+        let decompressed = try codec.decompress(compressed, uncompressedSize: original.count)
+
+        // Should match original
+        XCTAssertEqual(decompressed, original)
+    }
+
+    func testZstdLargeData() throws {
+        let codec = try CodecFactory.codec(for: .zstd)
+
+        // Create 10KB of repeated data (compresses well)
+        let pattern = Data("ABCDEFGHIJ".utf8)
+        var original = Data()
+        for _ in 0..<1000 {
+            original.append(pattern)
+        }
+
+        // Compress
+        let compressed = try codec.compress(original)
+
+        // Should achieve compression
+        let ratio = Double(compressed.count) / Double(original.count)
+        print("ZSTD compression ratio: \(ratio)")
+        XCTAssertLessThan(compressed.count, original.count, "Compressed should be smaller")
+
+        // Decompress
+        let decompressed = try codec.decompress(compressed, uncompressedSize: original.count)
+        XCTAssertEqual(decompressed, original)
+    }
+
+    func testZstdEmptyData() throws {
+        let codec = try CodecFactory.codec(for: .zstd)
+        let empty = Data()
+
+        let compressed = try codec.compress(empty)
+        let decompressed = try codec.decompress(compressed, uncompressedSize: 0)
+
+        XCTAssertEqual(decompressed, empty)
+    }
+
+    func testZstdBinaryData() throws {
+        let codec = try CodecFactory.codec(for: .zstd)
+
+        // Create binary data (0-255 repeated)
+        var original = Data()
+        for i in 0..<256 {
+            original.append(UInt8(i))
+        }
+        original.append(contentsOf: original) // 512 bytes
+
+        let compressed = try codec.compress(original)
+        let decompressed = try codec.decompress(compressed, uncompressedSize: original.count)
+
+        XCTAssertEqual(decompressed, original)
+    }
+
+    func testZstdRepeatingPattern() throws {
+        let codec = try CodecFactory.codec(for: .zstd)
+
+        // Highly compressible data
+        let original = Data(repeating: 0x42, count: 1000)
+
+        let compressed = try codec.compress(original)
+
+        // Should compress very well
+        let ratio = Double(compressed.count) / Double(original.count)
+        print("ZSTD repeating pattern compression ratio: \(ratio)")
+        XCTAssertLessThan(ratio, 0.5, "Repeating data should compress significantly")
+
+        let decompressed = try codec.decompress(compressed, uncompressedSize: original.count)
+        XCTAssertEqual(decompressed, original)
+    }
+
+    func testZstdTextData() throws {
+        let codec = try CodecFactory.codec(for: .zstd)
+
+        // Realistic text data
+        let text = """
+        Lorem ipsum dolor sit amet, consectetur adipiscing elit.
+        Sed do eiusmod tempor incididunt ut labore et dolore magna aliqua.
+        Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris.
+        Lorem ipsum dolor sit amet, consectetur adipiscing elit.
+        Sed do eiusmod tempor incididunt ut labore et dolore magna aliqua.
+        """
+
+        let original = Data(text.utf8)
+        let compressed = try codec.compress(original)
+
+        let ratio = Double(compressed.count) / Double(original.count)
+        print("ZSTD text data compression ratio: \(ratio)")
+        XCTAssertLessThan(ratio, 1.0, "Text should compress")
+
+        let decompressed = try codec.decompress(compressed, uncompressedSize: original.count)
+        XCTAssertEqual(decompressed, original)
+    }
+
+    func testZstdSizeMismatch() throws {
+        let codec = try CodecFactory.codec(for: .zstd)
+        let original = Data("Hello, World!".utf8)
+
+        let compressed = try codec.compress(original)
+
+        // Wrong uncompressed size
+        XCTAssertThrowsError(try codec.decompress(compressed, uncompressedSize: 1000)) { error in
+            guard case CodecError.sizeMismatch = error else {
+                XCTFail("Expected sizeMismatch error")
+                return
+            }
+        }
     }
 
     // MARK: - Real-World Data Tests

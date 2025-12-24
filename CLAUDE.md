@@ -46,8 +46,9 @@ swift test --filter Int32ColumnReaderTests.testReadInt32Column
 ```
 
 ### Dependencies
-All dependencies are pure Swift and managed by Swift Package Manager:
+All dependencies are managed by Swift Package Manager:
 - **Snappy**: Pure Swift implementation ([snappy-swift](https://github.com/codelynx/snappy-swift))
+- **ZSTD**: C library wrapper ([SwiftZSTD](https://github.com/aperedera/SwiftZSTD))
 - **GZIP**: Built-in Foundation framework
 
 ### Developer Setup (Optional)
@@ -143,7 +144,7 @@ Sources/Parquet/
 
 ### Reader (R1-R5) - COMPLETE
 - ✅ PLAIN and RLE_DICTIONARY encoding
-- ✅ UNCOMPRESSED, GZIP, Snappy compression
+- ✅ UNCOMPRESSED, GZIP, Snappy, ZSTD compression
 - ✅ Optional/required columns with definition levels
 - ✅ Nested types: lists, maps, structs (multi-level nesting)
 - ✅ Primitive types: Int32, Int64, Float, Double, String (UTF-8), Boolean
@@ -153,7 +154,7 @@ Sources/Parquet/
 ### Writer (W7) - COMPLETE
 - ✅ Primitive column writers: Int32, Int64, Float, Double, String, Boolean
 - ✅ PLAIN encoding
-- ✅ UNCOMPRESSED, GZIP, Snappy compression
+- ✅ UNCOMPRESSED, GZIP, Snappy, ZSTD compression
 - ✅ Optional/required columns with definition levels
 - ✅ List writers (single and multi-level nested lists)
 - ✅ Map writers (map<string, int32/int64/string>)
@@ -170,7 +171,7 @@ Sources/Parquet/
 ### Known Limitations
 - ❌ Dictionary encoding writer (PLAIN only)
 - ❌ Data Page V2 (V1 only)
-- ❌ Other compression: LZ4, ZSTD, BROTLI, LZO
+- ❌ Other compression: LZ4, BROTLI, LZO
 - ❌ Bloom filters
 - ❌ Column encryption
 

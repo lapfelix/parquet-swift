@@ -97,8 +97,12 @@ public struct CodecFactory {
             // Pure Swift Snappy implementation (always available)
             return SnappyCodec()
 
-        case .lz4, .lz4Raw, .zstd, .brotli, .lzo:
-            throw CodecError.unavailable("\(compression.rawValue) codec not yet implemented (Phase 2+)")
+        case .zstd:
+            // ZSTD via SwiftZSTD wrapper
+            return ZstdCodec()
+
+        case .lz4, .lz4Raw, .brotli, .lzo:
+            throw CodecError.unavailable("\(compression.rawValue) codec not yet implemented")
         }
     }
 
