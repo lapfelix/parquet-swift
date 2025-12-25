@@ -4,6 +4,7 @@
 
 import Foundation
 import SwiftZSTD
+import zstdlib
 
 /// Zstandard (ZSTD) compression codec
 ///
@@ -40,21 +41,31 @@ struct ZstdCodec: Codec {
             throw CodecError.invalidData("Empty compressed data")
         }
 
-        do {
-            let processor = ZSTDProcessor()
-            let decompressed = try processor.decompressFrame(data)
+        // Use ZSTD_decompress directly with the known uncompressedSize from Parquet metadata.
+        // This is necessary because Parquet provides the size separately, and some writers
+        // may not include it in the ZSTD frame header (which decompressFrame relies on).
+        var output = Data(count: uncompressedSize)
 
-            // Verify size matches expectation
-            guard decompressed.count == uncompressedSize else {
-                throw CodecError.sizeMismatch(expected: uncompressedSize, actual: decompressed.count)
+        let result = data.withUnsafeBytes { compressedPtr -> Int in
+            output.withUnsafeMutableBytes { outputPtr -> Int in
+                guard let src = compressedPtr.baseAddress,
+                      let dst = outputPtr.baseAddress else { return -1 }
+                return ZSTD_decompress(dst, uncompressedSize, src, data.count)
             }
-
-            return decompressed
-        } catch let error as CodecError {
-            throw error
-        } catch {
-            throw CodecError.decompressionFailed("ZSTD decompression failed: \(error)")
         }
+
+        if ZSTD_isError(result) != 0 {
+            if let errPtr = ZSTD_getErrorName(result) {
+                throw CodecError.decompressionFailed("ZSTD: \(String(cString: errPtr))")
+            }
+            throw CodecError.decompressionFailed("ZSTD decompression failed")
+        }
+
+        guard result == uncompressedSize else {
+            throw CodecError.sizeMismatch(expected: uncompressedSize, actual: result)
+        }
+
+        return output
     }
 
     func compress(_ data: Data) throws -> Data {
