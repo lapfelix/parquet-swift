@@ -4,7 +4,7 @@
 
 import XCTest
 @testable import Parquet
-import zstdlib
+import libzstd
 
 final class CodecTests: XCTestCase {
     // MARK: - Codec Factory Tests

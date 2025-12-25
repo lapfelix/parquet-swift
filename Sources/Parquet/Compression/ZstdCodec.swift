@@ -3,8 +3,7 @@
 // Licensed under the Apache License, Version 2.0
 
 import Foundation
-import SwiftZSTD
-import zstdlib
+import libzstd
 
 /// Zstandard (ZSTD) compression codec
 ///
@@ -13,8 +12,7 @@ import zstdlib
 ///
 /// # Implementation
 ///
-/// Uses [SwiftZSTD](https://github.com/aperedera/SwiftZSTD), which wraps
-/// the official Facebook ZSTD C library.
+/// Uses the official [Facebook ZSTD](https://github.com/facebook/zstd) C library.
 ///
 /// # Performance
 ///
@@ -74,12 +72,28 @@ struct ZstdCodec: Codec {
             return Data()
         }
 
-        do {
-            let processor = ZSTDProcessor()
-            // Use default compression level (3) - good balance of speed and ratio
-            return try processor.compressBuffer(data, compressionLevel: 3)
-        } catch {
-            throw CodecError.compressionFailed("ZSTD compression failed: \(error)")
+        let maxCompressedSize = ZSTD_compressBound(data.count)
+        var output = Data(count: maxCompressedSize)
+
+        // Use default compression level (3) - good balance of speed and ratio
+        let compressionLevel: Int32 = 3
+
+        let result = data.withUnsafeBytes { srcPtr -> Int in
+            output.withUnsafeMutableBytes { dstPtr -> Int in
+                guard let src = srcPtr.baseAddress,
+                      let dst = dstPtr.baseAddress else { return -1 }
+                return ZSTD_compress(dst, maxCompressedSize, src, data.count, compressionLevel)
+            }
         }
+
+        if ZSTD_isError(result) != 0 {
+            if let errPtr = ZSTD_getErrorName(result) {
+                throw CodecError.compressionFailed("ZSTD: \(String(cString: errPtr))")
+            }
+            throw CodecError.compressionFailed("ZSTD compression failed")
+        }
+
+        // Trim to actual compressed size
+        return output.prefix(result)
     }
 }

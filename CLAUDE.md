@@ -48,7 +48,7 @@ swift test --filter Int32ColumnReaderTests.testReadInt32Column
 ### Dependencies
 All dependencies are managed by Swift Package Manager:
 - **Snappy**: Pure Swift implementation ([snappy-swift](https://github.com/codelynx/snappy-swift))
-- **ZSTD**: C library wrapper ([SwiftZSTD](https://github.com/aperedera/SwiftZSTD))
+- **ZSTD**: Official Facebook library ([zstd](https://github.com/facebook/zstd))
 - **GZIP**: Built-in Foundation framework
 
 ### Developer Setup (Optional)

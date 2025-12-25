@@ -21,8 +21,8 @@ let package = Package(
     dependencies: [
         // Pure Swift Snappy implementation
         .package(url: "https://github.com/codelynx/snappy-swift.git", from: "1.0.1"),
-        // ZSTD compression (wraps C library)
-        .package(url: "https://github.com/aperedera/SwiftZSTD.git", branch: "master"),
+        // Official Facebook ZSTD library
+        .package(url: "https://github.com/facebook/zstd.git", from: "1.5.6"),
     ],
     targets: [
         // Main Parquet implementation
@@ -30,7 +30,7 @@ let package = Package(
             name: "Parquet",
             dependencies: [
                 .product(name: "SnappySwift", package: "snappy-swift"),
-                .product(name: "SwiftZSTD", package: "SwiftZSTD"),
+                .product(name: "libzstd", package: "zstd"),
             ],
             path: "Sources/Parquet"
         ),
