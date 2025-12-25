@@ -32,7 +32,8 @@ let package = Package(
                 .product(name: "SnappySwift", package: "snappy-swift"),
                 .product(name: "libzstd", package: "zstd"),
             ],
-            path: "Sources/Parquet"
+            path: "Sources/Parquet",
+            exclude: ["Reader/StructSemantics.md"]
         ),
 
         // Test suite
