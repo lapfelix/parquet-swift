@@ -4,6 +4,7 @@
 
 import XCTest
 @testable import Parquet
+import zstdlib
 
 final class CodecTests: XCTestCase {
     // MARK: - Codec Factory Tests
@@ -409,6 +410,73 @@ final class CodecTests: XCTestCase {
                 return
             }
         }
+    }
+
+    func testZstdDecompressWithKnownSize() throws {
+        // This test verifies that ZSTD decompression works when we provide
+        // the uncompressed size externally (as Parquet does via page metadata),
+        // rather than relying on the size being embedded in the ZSTD frame header.
+        // Some Parquet writers don't include the size in the frame header.
+        let codec = try CodecFactory.codec(for: .zstd)
+
+        // Test with various data sizes to ensure the known-size decompression works
+        let testCases: [(String, Data)] = [
+            ("small", Data("Hello".utf8)),
+            ("medium", Data(repeating: 0xAB, count: 1000)),
+            ("large", Data((0..<10000).map { UInt8($0 % 256) })),
+        ]
+
+        for (name, original) in testCases {
+            let compressed = try codec.compress(original)
+
+            // Decompress using the known size (simulating Parquet's approach)
+            let decompressed = try codec.decompress(compressed, uncompressedSize: original.count)
+
+            XCTAssertEqual(decompressed, original, "\(name) data should round-trip correctly")
+            XCTAssertEqual(decompressed.count, original.count, "\(name) size should match exactly")
+        }
+    }
+
+    func testZstdDecompressWithoutFrameContentSize() throws {
+        // This test creates ZSTD-compressed data WITHOUT the content size in the frame header.
+        // This would have failed with SwiftZSTD's decompressFrame (which uses ZSTD_getDecompressedSize),
+        // but works with our implementation that uses ZSTD_decompress with the known size from Parquet.
+        let original = Data("Test data for ZSTD without content size in frame header.".utf8)
+
+        // Compress using ZSTD C API with content size disabled in frame header
+        let cctx = ZSTD_createCCtx()
+        defer { ZSTD_freeCCtx(cctx) }
+
+        // Disable content size in frame header (simulates some Parquet writers)
+        ZSTD_CCtx_setParameter(cctx, ZSTD_c_contentSizeFlag, 0)
+
+        let maxCompressedSize = ZSTD_compressBound(original.count)
+        var compressed = Data(count: maxCompressedSize)
+
+        let compressedSize = original.withUnsafeBytes { srcPtr -> Int in
+            compressed.withUnsafeMutableBytes { dstPtr -> Int in
+                guard let src = srcPtr.baseAddress,
+                      let dst = dstPtr.baseAddress else { return 0 }
+                return ZSTD_compress2(cctx, dst, maxCompressedSize, src, original.count)
+            }
+        }
+
+        XCTAssertFalse(ZSTD_isError(compressedSize) != 0, "Compression should succeed")
+        compressed = compressed.prefix(compressedSize)
+
+        // Verify the frame does NOT contain the content size
+        let frameContentSize = compressed.withUnsafeBytes { ptr -> UInt64 in
+            guard let base = ptr.baseAddress else { return 0 }
+            return ZSTD_getFrameContentSize(base, compressed.count)
+        }
+        // ZSTD_CONTENTSIZE_UNKNOWN = UInt64.max (0xFFFFFFFFFFFFFFFF)
+        XCTAssertEqual(frameContentSize, UInt64.max, "Frame should not contain content size")
+
+        // Our codec should still decompress successfully using the known size
+        let codec = try CodecFactory.codec(for: .zstd)
+        let decompressed = try codec.decompress(compressed, uncompressedSize: original.count)
+
+        XCTAssertEqual(decompressed, original, "Should decompress correctly with externally-provided size")
     }
 
     // MARK: - Real-World Data Tests
