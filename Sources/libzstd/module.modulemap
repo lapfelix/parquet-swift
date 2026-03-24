@@ -1,4 +1,4 @@
-module libzstd [system] [extern_c] {
+module libzstd [extern_c] {
     config_macros [exhaustive] \
         /* zstd.h */ \
         ZSTD_STATIC_LINKING_ONLY, \
