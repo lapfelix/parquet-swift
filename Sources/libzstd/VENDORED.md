@@ -5,10 +5,10 @@ Source snapshot:
 - package version previously used by parquet-swift: 1.5.6
 
 Why this is vendored:
-- Xcode's strict module verification rejects the upstream SwiftPM module map
-  because it declares `config_macros`.
-- parquet-swift uses a local `module.modulemap` that exports only the public
-  zstd headers without those configuration macros.
+- parquet-swift avoids the upstream package graph and ships a local
+  `module.modulemap` for Xcode workspace compatibility.
+- The local module map exports only the public zstd headers and explicitly
+  declares the public configuration macros used by those headers.
 
 Update approach:
 1. Replace the files in `common/`, `compress/`, `decompress/`, `dictBuilder/`,
