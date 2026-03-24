@@ -45,5 +45,10 @@ let package = Package(
                 .copy("Fixtures")
             ]
         ),
+        .testTarget(
+            name: "ParquetPublicAPITests",
+            dependencies: ["Parquet"],
+            path: "Tests/ParquetPublicAPITests"
+        ),
     ]
 )

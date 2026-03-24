@@ -97,7 +97,8 @@ public struct SchemaBuilder {
             repetitionType = convertRepetitionType(thriftRep)
         }
 
-        // Create the node (without children first)
+        // Create the node and attach children as we descend so hierarchy metadata
+        // stays consistent for programmatically-built schemas too.
         let node = SchemaElement(
             name: thriftElement.name,
             elementType: elementType,
@@ -108,26 +109,12 @@ public struct SchemaBuilder {
             depth: depth
         )
 
-        // Build children
-        var children: [SchemaElement] = []
         for _ in 0..<numChildren {
             let child = try buildNode(from: elements, index: &index, depth: depth + 1, parent: node)
-            children.append(child)
+            try node.addChild(child)
         }
 
-        // Update children (Swift doesn't allow mutation after init for let properties)
-        // We need to recreate the node with children
-        let finalNode = SchemaElement(
-            name: thriftElement.name,
-            elementType: elementType,
-            repetitionType: repetitionType,
-            fieldId: thriftElement.fieldId,
-            children: children,
-            parent: parent,
-            depth: depth
-        )
-
-        return finalNode
+        return node
     }
 
     // MARK: - Type Conversion

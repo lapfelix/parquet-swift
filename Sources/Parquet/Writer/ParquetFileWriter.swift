@@ -105,7 +105,7 @@ public final class ParquetFileWriter {
 
         // Close previous row group if open
         if let previousRowGroup = currentRowGroup {
-            let metadata = try previousRowGroup.close()
+            let metadata = try previousRowGroup.finalize()
             rowGroups.append(metadata)
         }
 
@@ -145,7 +145,7 @@ public final class ParquetFileWriter {
             // Only include row group if it has columns written
             // In W1, we may have empty row groups since column writers aren't implemented
             if rowGroup.hasColumnsWritten {
-                let metadata = try rowGroup.close()
+                let metadata = try rowGroup.finalize()
                 rowGroups.append(metadata)
             }
             currentRowGroup = nil

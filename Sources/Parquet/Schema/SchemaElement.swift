@@ -25,16 +25,16 @@ public final class SchemaElement {
     public let fieldId: Int32?
 
     /// Children of this node (empty for primitive types)
-    public let children: [SchemaElement]
+    public private(set) var children: [SchemaElement]
 
     /// Parent node (nil for root)
     public weak var parent: SchemaElement?
 
     /// The depth of this node in the tree (0 for root)
-    public let depth: Int
+    public private(set) var depth: Int
 
     /// Full path from root to this node (e.g., ["schema", "user", "name"])
-    public let path: [String]
+    public private(set) var path: [String]
 
     /// Whether this is the root node
     public var isRoot: Bool {
@@ -94,9 +94,45 @@ public final class SchemaElement {
             self.path = [name]
         }
 
-        // Set parent reference for all children
+        // Re-home children under this node so parent/path/depth stay consistent.
         for child in children {
-            child.parent = self
+            child.updateHierarchy(parent: self, depth: depth + 1)
+        }
+    }
+
+    /// Add a child to this element.
+    ///
+    /// Only group elements may contain children.
+    ///
+    /// - Parameter child: The child element to attach
+    /// - Throws: SchemaError if this is a primitive element
+    public func addChild(_ child: SchemaElement) throws {
+        guard physicalType == nil else {
+            throw SchemaError.invalidSchema("Primitive element '\(name)' cannot have children")
+        }
+
+        child.detachFromParent()
+        child.updateHierarchy(parent: self, depth: depth + 1)
+        children.append(child)
+    }
+
+    private func detachFromParent() {
+        parent?.children.removeAll { $0 === self }
+        parent = nil
+    }
+
+    private func updateHierarchy(parent: SchemaElement?, depth: Int) {
+        self.parent = parent
+        self.depth = depth
+
+        if let parent {
+            self.path = parent.path + [name]
+        } else {
+            self.path = [name]
+        }
+
+        for child in children {
+            child.updateHierarchy(parent: self, depth: depth + 1)
         }
     }
 }

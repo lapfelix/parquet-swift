@@ -21,6 +21,7 @@ public final class RowGroupWriter {
     private var currentColumn: Int = 0
     private var numRows: Int64 = 0
     private var isClosed: Bool = false
+    private var finalizedMetadata: WriterRowGroupMetadata?
 
     /// Check if any columns have been written (internal for ParquetFileWriter)
     var hasColumnsWritten: Bool {
@@ -246,7 +247,7 @@ public final class RowGroupWriter {
 
         // Map wrapper column for levels computation
         // The key column's parent is the key_value group, parent's parent is the map wrapper
-        guard let mapElement = keyColumn.element.parent?.parent else {
+        guard keyColumn.element.parent?.parent != nil else {
             throw WriterError.invalidState("Cannot find map wrapper for column \(index)")
         }
 
@@ -366,7 +367,17 @@ public final class RowGroupWriter {
     /// Finalize a column writer and store its metadata
     /// - Parameter index: Column index to finalize
     /// - Throws: WriterError if column not found or finalization fails
-    func finalizeColumn(at index: Int) throws {
+    public func finalizeColumn(at index: Int) throws {
+        guard !isClosed else {
+            throw WriterError.invalidState("Row group is closed")
+        }
+
+        guard index == currentColumn else {
+            throw WriterError.invalidState(
+                "Columns must be finalized sequentially. Expected column \(currentColumn), got \(index)"
+            )
+        }
+
         guard let writerAny = columnWriters[index] else {
             throw WriterError.invalidState("No writer found for column \(index)")
         }
@@ -428,6 +439,7 @@ public final class RowGroupWriter {
         }
 
         columnMetadata.append(metadata)
+        columnWriters.removeValue(forKey: index)
         currentColumn += 1
     }
 
@@ -474,6 +486,8 @@ public final class RowGroupWriter {
         // Add metadata for both key and value columns
         columnMetadata.append(keyMetadata)
         columnMetadata.append(valueMetadata)
+        columnWriters.removeValue(forKey: startIndex)
+        columnWriters.removeValue(forKey: startIndex + 1)
 
         // Increment by 2 since map spans 2 columns
         currentColumn += 2
@@ -481,12 +495,22 @@ public final class RowGroupWriter {
 
     // MARK: - Row Group Finalization
 
-    /// Close the row group and return metadata
+    /// Close the row group.
+    ///
+    /// This finalizes row-group metadata immediately so the file writer can
+    /// include it later when the enclosing file is closed.
+    ///
+    /// - Throws: WriterError if the row group is incomplete
+    public func close() throws {
+        _ = try finalize()
+    }
+
+    /// Finalize the row group and return metadata for the file footer.
     /// - Returns: Metadata for this row group
-    /// - Throws: WriterError if row group is already closed or columns incomplete
-    func close() throws -> WriterRowGroupMetadata {
-        guard !isClosed else {
-            throw WriterError.invalidState("Row group already closed")
+    /// - Throws: WriterError if columns are incomplete
+    func finalize() throws -> WriterRowGroupMetadata {
+        if let finalizedMetadata {
+            return finalizedMetadata
         }
 
         // Validate all columns written
@@ -499,14 +523,17 @@ public final class RowGroupWriter {
         // Per Parquet spec: totalByteSize is "Total byte size of all the uncompressed column data"
         let totalByteSize = columnMetadata.reduce(Int64(0)) { $0 + $1.totalUncompressedSize }
 
-        isClosed = true
-
-        return WriterRowGroupMetadata(
+        let metadata = WriterRowGroupMetadata(
             numRows: numRows,
             totalByteSize: totalByteSize,
             columns: columnMetadata,
             ordinal: ordinal
         )
+
+        isClosed = true
+        finalizedMetadata = metadata
+
+        return metadata
     }
 
     // MARK: - Private Methods
