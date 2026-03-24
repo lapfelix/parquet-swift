@@ -21,16 +21,27 @@ let package = Package(
     dependencies: [
         // Pure Swift Snappy implementation
         .package(url: "https://github.com/codelynx/snappy-swift.git", from: "1.0.1"),
-        // Official Facebook ZSTD library
-        .package(url: "https://github.com/facebook/zstd.git", from: "1.5.6"),
     ],
     targets: [
+        // Vendored Zstandard C library. We keep the module name as `libzstd`
+        // so the existing Swift codec and tests do not need API changes.
+        .target(
+            name: "libzstd",
+            path: "Sources/libzstd",
+            exclude: ["LICENSE.zstd"],
+            sources: ["common", "compress", "decompress", "dictBuilder"],
+            publicHeadersPath: ".",
+            cSettings: [
+                .headerSearchPath(".")
+            ]
+        ),
+
         // Main Parquet implementation
         .target(
             name: "Parquet",
             dependencies: [
                 .product(name: "SnappySwift", package: "snappy-swift"),
-                .product(name: "libzstd", package: "zstd"),
+                "libzstd",
             ],
             path: "Sources/Parquet",
             exclude: ["Reader/StructSemantics.md"]

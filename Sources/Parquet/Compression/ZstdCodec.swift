@@ -12,7 +12,7 @@ import libzstd
 ///
 /// # Implementation
 ///
-/// Uses the official [Facebook ZSTD](https://github.com/facebook/zstd) C library.
+/// Uses vendored source from the upstream [Zstandard](https://github.com/facebook/zstd) C library.
 ///
 /// # Performance
 ///
