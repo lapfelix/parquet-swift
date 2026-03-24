@@ -32,7 +32,16 @@ let package = Package(
             sources: ["common", "compress", "decompress", "dictBuilder"],
             publicHeadersPath: ".",
             cSettings: [
-                .headerSearchPath(".")
+                .headerSearchPath("."),
+                // Pre-define visibility macros so the #ifndef guards in zstd.h
+                // don't trigger Xcode's "configuration macro" validation error.
+                .define("ZSTDLIB_VISIBLE", to: ""),
+                .define("ZSTDLIB_HIDDEN", to: ""),
+                .define("ZSTD_CLEVEL_DEFAULT", to: "3"),
+                .define("ZDICTLIB_VISIBLE", to: ""),
+                .define("ZDICTLIB_HIDDEN", to: ""),
+                .define("ZSTDERRORLIB_VISIBLE", to: ""),
+                .define("ZSTDERRORLIB_HIDDEN", to: ""),
             ]
         ),
 
